@@ -1,0 +1,26 @@
+\begin{thebibliography}{1}
+
+\bibitem{BSM1973}
+F.~Black and M.~S. Scholes, ``{The Pricing of Options and Corporate
+  Liabilities},'' {\em Journal of Political Economy}, vol.~81, pp.~637--654,
+  May-June 1973.
+
+\bibitem{Hagan2002}
+P.~Hagan, D.~Kumar, A.~Lesniewski, and D.~Woodward, ``Managing smile risk,''
+  {\em Wilmott Magazine}, vol.~1, pp.~84--108, 01 2002.
+
+\bibitem{Heston93aclosed-form}
+S.~L. Heston, ``A closed-form solution for options with stochastic volatility
+  with applications to bond and currency options,'' {\em Review of Financial
+  Studies}, vol.~6, pp.~327--343, 1993.
+
+\bibitem{Andrea2018}
+E.~Nastasi, A.~Pallavicini, and G.~Sartorelli, ``{Smile Modelling in Commodity
+  Markets},'' Papers 1808.09685, arXiv.org, Aug. 2018.
+
+\bibitem{Tian2015}
+Y.~Tian, Z.~Zhu, G.~Lee, F.~Klebaner, and K.~Hamza, ``Calibrating and pricing
+  with a stochastic-local volatility model,'' {\em The Journal of Derivatives},
+  vol.~22, no.~3, pp.~21--39, 2015.
+
+\end{thebibliography}

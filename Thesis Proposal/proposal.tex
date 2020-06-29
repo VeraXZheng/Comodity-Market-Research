@@ -1,0 +1,100 @@
+\documentclass[12pt, a4paper]{article}
+\setlength{\oddsidemargin}{0.5cm}
+\setlength{\evensidemargin}{0.5cm}
+\setlength{\topmargin}{-1.6cm}
+\setlength{\leftmargin}{0.5cm}
+\setlength{\rightmargin}{0.5cm}
+\setlength{\textheight}{24.00cm} 
+\setlength{\textwidth}{15.00cm}
+\parindent 0pt
+\parskip 5pt
+\pagestyle{plain}
+
+\usepackage{amssymb}
+\usepackage{changepage}
+\usepackage{amsmath}
+\usepackage{array}
+\setlength\extrarowheight{3pt}
+\usepackage{booktabs}
+\usepackage{dcolumn}
+\usepackage{geometry}                % See geometry.pdf to learn the layout options. There are lots.
+\geometry{letterpaper}                   % ... or a4paper or a5paper or ... 
+%\geometry{landscape}                % Activate for for rotated page geometry
+%\usepackage[parfill]{parskip}    % Activate to begin paragraphs with an empty line rather than an indent
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{pgfplotstable}
+\pgfplotsset{compat=1.8}
+\newcolumntype{d}{D{.}{.}{5}}
+\newcounter{myrow}
+\setcounter{myrow}{-1}
+
+\title{Thesis Proposal}
+\author{}
+\date{}
+
+\newcommand{\namelistlabel}[1]{\mbox{#1}\hfil}
+\newenvironment{namelist}[1]{%1
+\begin{list}{}
+    {
+        \let\makelabel\namelistlabel
+        \settowidth{\labelwidth}{#1}
+        \setlength{\leftmargin}{1.1\labelwidth}
+    }
+  }{%1
+\end{list}}
+
+\begin{document}
+\maketitle
+
+\begin{namelist}{xxxxxxxxxxxx}
+\item[{\bf Title:}]
+	Stochastic Local Volatility Modelling in Commodity Market
+\item[{\bf Author:}]
+	Xiaotian Zheng (x.zheng@student.vu.nl)
+\item[{\bf Supervisor:}]
+         Dr. S.A. Borovkova
+\item[{\bf Degree:}]
+	MSc DHP Quantitative Risk Management 
+\end{namelist}
+
+\section*{Abstract} 
+In this report, we investigate the stochastic local volatility (SLV) model for derivative contracts on commodity futures. Means of simulation and parsimonious parametrisation are considered to deal with the limited quotes in the market. First, the report considers a scheme of extracting normalised call prices from market quotes by an extensive Dupire equation together with the implied volatility. Then we proceed to the calibration of the local volatility model including the calibration of the mean-reversion speed. Next, a pricing mechanism is developed with the backward PDE methods or an iterative Monte-Carlo simulations of the local volatility surface. Finally, we evaluate the performance on market data.
+
+\section*{Introduction} 
+Volatility modelling has historically been very popular in the finance market and related industries. From the early widely used Black-Scholes-Merton model ~\cite{BSM1973} with constant volatility on plain vanilla options to newly developed SABR by Hagan et al. ~\cite{Hagan2002} and Heston SV models~\cite{Heston93aclosed-form}. They all receive various concerns and criticism. In the local volatility framework, the volatility is a deterministic function of the underlying stochastic variables. e.g. non stochastic given stock price. Due to the incapability of describing the implied volatility surface, the LV model does not work well for exotic options. The other popular variant to the BSM context is the stochastic volatility model with jump-diffusion process. For example, the two quoted above. This class of models introduces the randomness of the variance process of the underlying prices The mean-reversion feature in the model makes it hard to fit options far from money. So it is intuitive to propose a model that combine both features in local volatility model and stochastic volatility models which is so called stochastic local volatility model. SLV model is consistent with the observed market dynamics and vanilla option prices.
+ 
+\section*{Methodology}
+The SLV contains a local volatility function and a volatility process. The local volatility function can be specified as a function of the spot price. Andrew et al. ~\cite{Andrea2018}  in their paper introduces a local volatility linear model characterised by an affine drift term as the underlying spot price process $S_t$. 
+\begin {equation}
+\label{eqa:Pfutures}
+d S_t = (\alpha(t)+\beta(t) S(t)) dt +\eta_{s}(t,S_{t}) S_t d W_t \quad\quad\qquad S_0 = \bar{S}
+\end{equation}\\
+where $W$ is standard brownian motion and $\alpha$ is the mean reversion speed, $\beta$ is stochastic ,the local volatility $\eta_s$ is Lipschitz. Following the normalised spot price process, the futures prices are calibrated by solving a first-order ODE. The futures prices have the following form:
+\begin {equation}
+F_t(T) = F_0(T) (1-(1-s_t)e^{-\int_{t}^{T} \alpha(u)du})
+\end{equation}
+Then, by differentiating w.r.t time t,
+\begin {equation}
+dF_t(T) = \eta_F(t,T,F_t(T))dW_t
+\end{equation}
+where the local volatility of futures prices can be defined by means of a proper remapping of the local volatility of the spot price in Equation~(\ref{eqa:Pfutures}).
+The call prices on European options or future style American options can then be calculated with Extended Dupire Equation.\\ 
+ The level of the local-volatility function is iteratively updated by the calibration procedure in which the level and the skew of the local volatility function in term of the model implied volatilities are used. The implied volatilities can be calculated from the BS formula.\\
+Tian et al. \cite{Tian2015} also proposes a similar Heston-liked dynamics contains a so called 'leverage function' which can be interpreted as a ration between the LV and conditional expectation of SV.
+\begin{gather*}
+dS_t = \mu_1(S_t,t)dt+L(S_t,V_t,t)dW_t^1,\\
+dV_t = \mu_2(V_t,t)dt +\sigma_2(V_t,t)dW_t^2,\\
+dW_t^1 dW_t^2 =  \rho dt 
+\end{gather*}\\
+The calibration of the model includes two groups of the parameters: the ones from Heston model are calibrated to market implied volatility data and from the leverage function L to correct the stochastic volatility for far from money options. In the calibration procedure of the leverage function, the exotic functions are also included, an extra parameter $\eta $ is introduced as a mixing weight fraction to balance the contribution from the LV and SV components respectively. Finite difference method for calibration and pricing are implemented, in particular , first discretisation schemes in the space domain are introduced for a nonuniform mesh, followed by a discretisation in time horizon with alternation direction implicit method. 
+ \section*{Data}
+ First thought is options on Brent crude oil futures (WTI or ICE). However, open to suggestion for practical issues and data availability.
+\bibliographystyle{ieeetr}
+\bibliography{MyBib}
+
+
+
+
+\end{document}
+
