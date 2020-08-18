@@ -6,89 +6,98 @@ Created on Thu Jul  9 14:55:51 2020
 
 @author: Vera Zheng 
 """
-
-
+import scipy.stats as si
+from sympy.stats import Normal, cdf
 import numpy as np
 from scipy.stats import norm
 import pandas as pd
 import matplotlib.pyplot as plt
 class Process:
+    
+    def __init__(self, sigma0, a,m,alpha,rho,S0,b,c):
+        """
+        Parameters
+        ----------
+        sigma0 : float
+            initial vol if the dynamic is chosen to be "stochastic"
+        a : float
+            param in the fititatious spot price process in paper Smile Modelling
+        m : int
+            number of simulations
+        alpha : float
+            param in the vol process if the dynamic is chosen to be "Stochastic"
+            
+        rho : float between 0 and 1
+             correlation between vol and spot if the dynamic is chosen to be "Stochastic"
+        S0 : float
+              initial ficticious spot price
+        b : float
+            param in the vol process if the dynamic is chosen to be "Linear"
+        c : float
+           param in the vol process if the dynamic is chosen to be "stochastic"
 
-    def __init__(self, sigma0, a,m,alpha,rho):
-     
+        Returns
+        -------
+      
+
+        """
+        self._S0 =S0
         self._sigma0 = sigma0
         self._a = a
         self._m = m 
         self._alpha = alpha
         self._rho = rho
-   
-    def simulate_linear(self,T=1, dt=0.001, S0=1.,b=0.3, c=0.001):
-        n = round(T / dt)
-        a = self._a
-        m = self._m
-        sigma = np.zeros((n,m))
-        
-        
-        St = np.zeros((n,m))
-        St[0,:] = S0
-        
-        sigma = np.zeros((n,m))
-        sigma[0,:] = b*S0 + c
-        sqrt_dt = dt ** 0.5
-        
-        dw1 = np.random.normal(size=(n,m))* sqrt_dt 
-       
-        for j in range (m):
-            for i in range(n - 1):
-               
-               sigma[i+1,j] = b*St[i+1,j] +c 
-               St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
-        
-        return St
-   
-        
-    def Simulate_stochastic(self, T=1, dt=0.001, S0=1.):
+        self._b = b
+        self._c =c
+    
+    def simulate_spot(self,T, dt,dynamics):
         """
         function to model the normalised fictitious spot price
         Input:
         dt: time interval
-        T: maturity
-        S0: initial fictious spot price
-        sigma0: Initial stochastic volatility
-        m:    number of paths
-        alpha: prarameters in loc vol thus controls the height of the ATM implied volatility level
-        rho: controls the slope of the implied skew 
+        T: time to maturity
+        dynamics: param to determine the spot process
         Output:
         St: spot prices dynamics
             
         """
-        #number of steps
         n = round(T / dt)
-        sigma0 = self._sigma0
         a = self._a
         m = self._m
-        alpha = self._alpha
-        rho = self._rho
-        
-        sigma = np.zeros((n,m))
-        sigma[0,:] = sigma0
-        
+        b = self._b
+        c = self._c
+        S0 = self._S0
         St = np.zeros((n,m))
         St[0,:] = S0
-       
+        alpha = self._alpha
+        rho = self._rho
+        sigma = np.zeros((n,m))
+        sigma0 = self._sigma0
         sqrt_dt = dt ** 0.5
         
         dw1 = np.random.normal(size=(n,m))* sqrt_dt 
-        dw2 = rho * dw1 + np.sqrt(1- rho **2) *dw1
         
-        for j in range (m):
-            for i in range(n - 1):
-               dSigma = alpha *sigma[i,j] * dw2[i,j] 
-               sigma[i+1,j] = sigma[i,j] + dSigma
-               St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
+        if dynamics == "Linear":
+            sigma[0,:] = b * S0 + c
+            for j in range (m):
+                for i in range(n - 1):
+               
+                     sigma[i+1,j] = b * St[i+1,j] +c 
+                     St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
         
+        if dynamics == "Stochastic":
+             sigma[0,:] = sigma0
+             dw2 = rho * dw1 + np.sqrt(1- rho **2) *dw1
+             for j in range (m):
+                 for i in range(n - 1):
+                     dSigma = alpha *sigma[i,j] * dw2[i,j] 
+                     sigma[i+1,j] = sigma[i,j] + dSigma
+                     St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
+        return St
+   
         
-        return St, sigma
+ 
+   
    
     def FutureDynamics(self, T,dt,St,F0):
         """
@@ -99,7 +108,7 @@ class Process:
         F0: Future price at the begining of the contact
         
         Output:
-        Ft: spot prices dynamics
+        Ft: spot prices dynamics size n X m 
             
         """
         a = self._a
@@ -114,9 +123,9 @@ class Process:
 
         return Ft
    
-    def OptionPricing(self,St,K0,r,dt,T):
+    def OptionPricing(self,S_T,K,r,dt,T,F_T,a,method):
         """
-        function to price call and put options
+        function to price call options on the futures 
         Input:
         dt: time interval
         T: maturity
@@ -127,20 +136,32 @@ class Process:
         Put: Put price
             
         """
+        sigma = self._sigma0
         
-        call = np.zeros(m)
-        put = np.zeros(m)
-    
-        for i in range (m):
-            call[i] = max(0,St[-1,i] - K0)
-            put[i] = max(0,-St[-1,i] + K0)
+        K= 1-np.exp(a*T)*(1-K/F_T)
+        if method == "MC":
+           call = np.maximum(0,S_T - K)*F_T
+        if method == "bls":   
+            
+                d1 = (np.log(S_T / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+                d2 = (np.log(S_T/ K) + (r - 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+               
+                call = (S_T * si.norm.cdf(d1, 0.0, 1.0) - K * np.exp(-r * T) * si.norm.cdf(d2, 0.0, 1.0))*F_T
 
-        Call = np.exp(-r*T)* np.sum(call)/m
-        Put = np.exp(-r*T)* np.sum(put)/m
-        SE_call = np.sqrt(sum(call-Call)/(m*(m-1)))
-        SE_put = np.sqrt(sum(put-Put)/(m*(m-1)))
-        return Call, Put, SE_call, SE_put
+        Call = np.exp(-r*T)* np.sum(call)/m  *np.exp(-a*T)
         
+        SE_call = np.sqrt(sum(call-Call)/(m*(m-1)))
+       
+        return Call,  SE_call
+    
+   
+def option_bls(sigma,K,T,S):
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        d2 = (np.log(S / K) + (r - 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        call = (S * si.norm.cdf(d1, 0.0, 1.0) - K * np.exp(-r * T) * si.norm.cdf(d2, 0.0, 1.0))
+        return call
+
+     
  ###############main############
 class AsianBasketOption:
     def __init__(self,weight):
@@ -162,10 +183,6 @@ class AsianBasketOption:
     
 
    
-    
-
-   
-
 def implied_vol(mkt_price, S, K, T_maturity, r, *args):
         Max_iteration = 500
         PRECISION = 1.0e-5
@@ -180,23 +197,22 @@ def implied_vol(mkt_price, S, K, T_maturity, r, *args):
                 return sigma
             sigma = sigma + diff/vega # f(x) / f'(x)
         return sigma 
-        
+  
+
+
+
+
+
+
+      
    ###########################################################
 ### start main
 if __name__ == "__main__":
     output_path = "/Users/veraisice/Desktop/Comodity-Market-Research/thesis_1/"
     input_path  = "/Users/veraisice/Desktop/Comodity-Market-Research/Input/"
-    Month = "August"
+   
     Future_prices = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name="Futures")     
-    Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)    #SEPopt
-    #strike 
-    Strike_list = Option_Data["Strike"]
-    #market option price
-    Call_list = Option_Data["Call"]
-    #time to maturity
-    T_M = Option_Data["Time to Maturity"].values[0]
-    #future price
-    Future = Option_Data["1-Month Future"].values[0]
+   
     
     T = 2
     dt = 1/252
@@ -206,8 +222,13 @@ if __name__ == "__main__":
     alpha = 0.5
     rho = 0.5
     m = 1000
-    K0 =1
+    K0 = 1
     r =0.01
+    
+    a =0.01   
+    blist = np.linspace(0,1,5)
+    c = 0.3
+    
     F10 = Future_prices.loc[Future_prices['Month']== '2020-08-25','1-Month Future'].values[0]
     F20 = Future_prices.loc[Future_prices['Month']== '2020-09-25','1-Month Future'].values[0]
     
@@ -216,66 +237,69 @@ if __name__ == "__main__":
     
     #list of mean reverting speed of interest
     alist=[0,0.5,1]
-    styl_list=['-','--','-.']
-    # plot of the stochastic spot prices dynamics 
-    plt.figure(dpi=1200)
-    for i in range(len(alist)):
-        S,sigma = Process(sigma0,alist[i], m, alpha, rho).Simulate_stochastic(T, dt)
-        avgS = np.mean(S,1)
-        plt.plot(avgS, ls =styl_list[i], label=r"Stochastic(a =" + str(alist[i]) +", $\sigma_0$ ="+ str(sigma0)+")")
-       
-    plt.xlabel('Time index')
-    plt.ylabel('Value')
-    plt.title("Realization of stochastic spot prices dynamics")
-    plt.legend(loc='best')
-    plt.savefig(output_path + "Figures/Stochastic_spot")
-   # plot of the stochastic futures prices dynamics 
-    plt.figure(dpi=1200)
-    for i in range(len(alist)):
-            St,sigma = Process(sigma0, alist[i],m, alpha, rho).Simulate_stochastic(T, dt)
-            Ft = Process(sigma0,alist[i],m, alpha, rho).FutureDynamics(T,dt,St,F10)
-            avgFt =  np.mean(Ft,1)
-            plt.plot(avgFt,ls =styl_list[i],label=r"Stochastic(a = "+ str(alist[i]) +", $\sigma_0$ = "+ str(sigma0)+")")
     
-    plt.xlabel('Time index')
-    plt.ylabel('Value')
-    plt.title("Realization of Future processes")
-    plt.legend(loc='best')
-    plt.savefig(output_path + "Figures/Stochastic_futures")
-#call and put prices
+   
+
+    dynamics = "Stochastic"
+    avgS = np.zeros((int(T/dt),len(alist)))
+    avgF = np.zeros((T*12,len(alist)))
     call = np.zeros(len(alist))
     put = np.zeros(len(alist))
     SE_call = np.zeros(len(alist))
     SE_put = np.zeros(len(alist))
     for i in range(len(alist)):
-        St,sigma = Process(sigma0, alist[i],m, alpha, rho).Simulate_stochastic(T, dt)
-        
-        call[i], put[i],SE_call[i], SE_put[i] = Process(sigma0, alist[i],m, alpha, rho).OptionPricing(St, K0, r, dt, T)
-       
-    print ("Call and put option prices by MC method with " +str(m)+ " simulations and different MR speed are " + str(call) + " and "+str(put)+\
-           " respectively; with Standard Error for Call " +str(SE_call)+ " and Put "+str(SE_put))
+        S = Process(sigma0, alist[i],m, alpha, rho,S0,blist[i],c).simulate_spot(T, dt,dynamics)
+        F= Process(sigma0,a,m, alpha, rho,S0,blist[i],c).FutureDynamics(T,dt,S,F10)
+        F_T=F[:,-1]
+        call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,blist[i],c).OptionPricing(S[:,-1], K0, r, dt, T,F_T,a,"bls")
+        avgF[:,i] =  np.mean(F,1)
+        avgS[:,i] = np.mean(S,1)
+    print ("Call option prices by MC method with " +str(m)+ " simulations and different MR speed are " + str(call) +\
+  
+           "  with Standard Error for Call " +str(SE_call))
+ #plot of spot process with linear vol
+    
+    plt.figure(dpi=1000)
+    for i in range(len(blist)):
+        plt.plot(avgS[:,i],label=r"Linear(a =" + str(a)+ ", b = "+str(blist[i])+",c = "+str(c)+")")
+    plt.xlabel('Time index')
+    plt.ylabel('Value')
+    plt.title("Realization of " +str(dynamics) +"vol spot prices dynamics")
+    plt.legend(loc='best')
+    #plt.savefig(output_path + "Figures/"+str(dynamics)+"linear_spot")
+ 
+    ####plot of future process 
+    plt.figure(dpi=1000)
+    for i in range(len(blist)):
+        plt.plot(avgF[:,i],label=r"Stochastic(a =" + str(a)+ ",b = "+ str(blist[i])+")")
+    plt.xlabel('Time index')
+    plt.ylabel('Value')
+    plt.title("Realization of " +str(dynamics) +"  vol futures prices dynamics")
+    plt.legend(loc='best')
+    plt.savefig(output_path + "Figures/linear_futures")       
+  
 
 ################linear vol #########################
 
 #plot spot and futures prices with linear vol
     
-    a =0.01   
-    blist = np.linspace(0,1,50)
-    c = 0.3
+    
     avgS = np.zeros((int(T/dt),len(blist)))
     avgF = np.zeros((T*12,len(blist)))
     call = np.zeros(len(blist))
-    put = np.zeros(len(blist))
+
     SE_call = np.zeros(len(blist))
-    SE_put = np.zeros(len(blist))
+   
     for i in range(len(blist)):
-        S = Process(sigma0, a, m, alpha, rho).simulate_linear(T,dt,S0,blist[i], c)
-        F= Process(sigma0,a,m, alpha, rho).FutureDynamics(T,dt,S,F10)
-        call[i], put[i],SE_call[i], SE_put[i] = Process(sigma0, a,m, alpha, rho).OptionPricing(S, K0, r, dt, T)
+        S = Process(sigma0, a, m, alpha, rho,S0,blist[i],c).simulate_spot(T,dt,"Linear")
+        F= Process(sigma0,a,m, alpha,rho,S0,blist[i],c).FutureDynamics(T,dt,S,F10)
+        F_T = F[-1,:]
+        S_T = S[-1,:]
+        call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,blist[2],c).OptionPricing(S_T, K0, r, dt, T,F_T,a,"bls")
         avgF[:,i] =  np.mean(F,1)
         avgS[:,i] = np.mean(S,1)
    #plot of spot process with linear vol
-    plt.figure() 
+    plt.figure(dpi=1000) 
     for i in range(len(blist)):
         plt.plot(avgS[:,i],label=r"Linear(a =" + str(a)+ ", b = "+str(blist[i])+",c = "+str(c)+")")
     plt.xlabel('Time index')
@@ -284,7 +308,7 @@ if __name__ == "__main__":
     plt.legend(loc='best')
     plt.savefig(output_path + "Figures/linear_spot")
   #plot of future process with linear vol  
-    plt.figure()
+    plt.figure(dpi=1000)
     for i in range(len(blist)):
         plt.plot(avgF[:,i],label=r"Stochastic(a =" + str(a)+ ",b = "+ str(blist[i])+")")
     plt.xlabel('Time index')
@@ -299,28 +323,71 @@ if __name__ == "__main__":
     plt.xlabel("b value")
     plt.ylabel("European Call Price")
     plt.title("European Call Price vs vol Coefficient b")
+
+
 ###################Asian Basket Option#########
-    m=1000
+    m=100
     rho1 =0.4
     rho2 =0.3
     sigma1 =0.1
     sigma2 = 0.1
     alpha = 0.2
     for i in range(len(alist)):
-        S1t,Sigma1 = Process(sigma1, alist[i],m, alpha, rho1).Simulate_stochastic(T, dt)
-        F1t = Process(sigma1,alist[i],m, alpha,rho1 ).FutureDynamics(T,dt,S1t,F0=F10)
-        S2t,Sigma2 = Process(sigma2, alist[i],m, alpha, rho2).Simulate_Stochastic(T, dt)
-        F2t = Process(sigma2,alist[i],m, alpha, rho2).FutureDynamics(T,dt,S2t,F0=F20)
+        S1t = Process(sigma1, alist[i],m, alpha, rho1,S0,blist[i],c).Simulate_spot(T, dt)
+        F1t = Process(sigma1,alist[i],m, alpha,rho1,S0,blist[i],c).FutureDynamics(T,dt,S1t,F0=F10)
+        S2t = Process(sigma2, alist[i],m, alpha, rho2,S0,blist[i],c).Simulate_Stochastic(T, dt)
+        F2t = Process(sigma2,alist[i],m, alpha, rho2,S0,blist[i],c).FutureDynamics(T,dt,S2t,F0=F20)
         V, avgV = AsianBasketOption(weight=[0.4,0.6]).pricing(0,len(F1t) , F1t, F2t)    
         print('Call price of the Asian basket Option with ' + str(m)+" simulations and mean reversion speed "+str(alist[i]) + "is " +str(avgV))     
            
  #############implied vol##################### 
+    Month = "Sep"
+    Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)    #SEPopt
+    #strike 
+    Strike_list = Option_Data["Strike"]
+    #market option price
+    Call_list = Option_Data["Call"]
+    #time to maturity
+    T_M = Option_Data["Time to Maturity"].values[0]
+    #future price
+    Future = Option_Data["1-Month Future"].values[0]
     ones =np.ones( np.size(Call_list) )        
     params = np.vstack((Call_list, Future*ones, Strike_list, T_M*ones, r*ones, sigma0*ones))
     vols = list(map(implied_vol, *params))
+    
+    plt.figure(dpi=1000)
     plt.plot(Strike_list,vols,label="Implied Volatilities")
     plt.xlabel("Strike")
     plt.ylabel("Implied Volatility")
     plt.title("Implied Volatilities of TTF Futures Options Expired in " + str(Month)  )
     plt.legend(loc= 'best')
+    plt.savefig(output_path+"Figures/IV_sep")
     
+    
+    avgS = np.zeros((int(T/dt),len(Strike_list)))
+    avgF = np.zeros((T*12,len(Strike_list)))
+    call_bls = np.zeros(len(Strike_list))
+
+    SE_call_mc = np.zeros(len(Strike_list))
+    call_mc = np.zeros(len(Strike_list))
+
+    SE_call_bls = np.zeros(len(Strike_list))
+    
+    S = Process(sigma0, a, m, alpha, rho,S0,blist[2],c).simulate_spot(T,dt,"Linear")
+    # F= Process(sigma0,a,m, alpha,rho,S0,blist[2],c).FutureDynamics(T,dt,S,F10)
+
+    S_T = S[-1,:]
+    for i in range(len(Strike_list)):
+            call_bls[i],SE_call_bls[i] = Process(sigma0, a,m, alpha, rho,S0,blist[1],c).OptionPricing(S_T, Strike_list[i], r, dt, T,Future*np.ones((1000)),a,"bls")
+            call_mc[i],SE_call_mc[i] = Process(sigma0, a,m, alpha, rho,S0,blist[1],c).OptionPricing(S_T, Strike_list[i], r, dt, T,Future*np.ones((1000)),a,"MC")
+            avgF[:,i] =  np.mean(F,1)
+            avgS[:,i] = np.mean(S,1)
+    plt.figure(dpi=1200)
+    plt.plot(Strike_list,call_bls,"-o",label="Model Call Price (Black-Scholes)")
+    plt.plot(Strike_list,call_mc,"-o",label="Model Call Price (Monte Carlo)")
+    plt.plot(Strike_list,Call_list,"-o",label= "Market Call Price") 
+    plt.legend(loc="best")
+    plt.xlabel("Strike")
+    plt.ylabel("European Call Price")
+    plt.title("European Call Price vs Strike")
+    plt.savefig(output_path + "Figures/option_LV")

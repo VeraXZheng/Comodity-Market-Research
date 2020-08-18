@@ -9,6 +9,7 @@ Created on Thu Jul  9 14:55:51 2020
 
 
 import numpy as np
+from scipy.stats import norm
 import pandas as pd
 import matplotlib.pyplot as plt
 class Process:
@@ -63,15 +64,10 @@ class Process:
         """
         #number of steps
         n = round(T / dt)
- 
         sigma0 = self._sigma0
-        
         a = self._a
-        
         m = self._m
-        
         alpha = self._alpha
-        
         rho = self._rho
         
         sigma = np.zeros((n,m))
@@ -89,7 +85,7 @@ class Process:
             for i in range(n - 1):
                dSigma = alpha *sigma[i,j] * dw2[i,j] 
                sigma[i+1,j] = sigma[i,j] + dSigma
-               St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j]  * dw1[i,j]
+               St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
         
         
         return St, sigma
@@ -163,30 +159,61 @@ class AsianBasketOption:
         avgV = np.mean(V)
          
         return V, avgV
-          
-           
-         
-         
-         
+    
+
+   
+    
+
+   
+
+def implied_vol(mkt_price, S, K, T_maturity, r, *args):
+        Max_iteration = 500
+        PRECISION = 1.0e-5
+        sigma = 0.5
+        for i in range(0, Max_iteration):
+            d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+            d2 = d1 - sigma * np.sqrt(T)
+            bls_price = S * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
+            vega = S * norm.pdf(d1) * np.sqrt(T)
+            diff = mkt_price - bls_price  
+            if (abs(diff) < PRECISION):
+                return sigma
+            sigma = sigma + diff/vega # f(x) / f'(x)
+        return sigma 
         
    ###########################################################
 ### start main
 if __name__ == "__main__":
     output_path = "/Users/veraisice/Desktop/Comodity-Market-Research/thesis_1/"
     input_path  = "/Users/veraisice/Desktop/Comodity-Market-Research/Input/"
-    Future_prices = pd.read_excel(input_path+ "1M_ForwardCurve"+".xlsx")     
+    Month = "August"
+    Future_prices = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name="Futures")     
+    Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)    #SEPopt
+    #strike 
+    Strike_list = Option_Data["Strike"]
+    #market option price
+    Call_list = Option_Data["Call"]
+    #time to maturity
+    T_M = Option_Data["Time to Maturity"].values[0]
+    #future price
+    Future = Option_Data["1-Month Future"].values[0]
+    
     T = 2
     dt = 1/252
     S0 = 1
    
-    sigma0 = 0.5
+    sigma0 = 0.4
     alpha = 0.5
     rho = 0.5
-    m = 10
+    m = 1000
     K0 =1
     r =0.01
-    F10 = Future_prices.loc[Future_prices['Month']== '2020-08-01','1-Month Future'].values[0]
-    F20 = Future_prices.loc[Future_prices['Month']== '2020-09-01','1-Month Future'].values[0]
+    F10 = Future_prices.loc[Future_prices['Month']== '2020-08-25','1-Month Future'].values[0]
+    F20 = Future_prices.loc[Future_prices['Month']== '2020-09-25','1-Month Future'].values[0]
+    
+    
+    
+    
     #list of mean reverting speed of interest
     alist=[0,0.5,1]
     styl_list=['-','--','-.']
@@ -232,8 +259,8 @@ if __name__ == "__main__":
 
 #plot spot and futures prices with linear vol
     
-    a =0.2   
-    blist = np.linspace(0,0.5,50)
+    a =0.01   
+    blist = np.linspace(0,1,50)
     c = 0.3
     avgS = np.zeros((int(T/dt),len(blist)))
     avgF = np.zeros((T*12,len(blist)))
@@ -249,8 +276,8 @@ if __name__ == "__main__":
         avgS[:,i] = np.mean(S,1)
    #plot of spot process with linear vol
     plt.figure() 
-    for i in len(blist):
-        plt.plot(avgS, ls =styl_list[i],label=r"Linear(a =" + str(a)+ ",b = "+str(blist[i])+",c = "+str(c)+")")
+    for i in range(len(blist)):
+        plt.plot(avgS[:,i],label=r"Linear(a =" + str(a)+ ", b = "+str(blist[i])+",c = "+str(c)+")")
     plt.xlabel('Time index')
     plt.ylabel('Value')
     plt.title("Realization of linear vol spot prices dynamics")
@@ -258,8 +285,8 @@ if __name__ == "__main__":
     plt.savefig(output_path + "Figures/linear_spot")
   #plot of future process with linear vol  
     plt.figure()
-    for i in len(blist):
-        plt.plot(avgF[i],ls =styl_list[i],label=r"Stochastic(a =" + str(a)+ ",b = "+ str(blist[i])+")")
+    for i in range(len(blist)):
+        plt.plot(avgF[:,i],label=r"Stochastic(a =" + str(a)+ ",b = "+ str(blist[i])+")")
     plt.xlabel('Time index')
     plt.ylabel('Value')
     plt.title("Realization of linear vol futures prices dynamics")
@@ -287,5 +314,13 @@ if __name__ == "__main__":
         V, avgV = AsianBasketOption(weight=[0.4,0.6]).pricing(0,len(F1t) , F1t, F2t)    
         print('Call price of the Asian basket Option with ' + str(m)+" simulations and mean reversion speed "+str(alist[i]) + "is " +str(avgV))     
            
-           
-   
+ #############implied vol##################### 
+    ones =np.ones( np.size(Call_list) )        
+    params = np.vstack((Call_list, Future*ones, Strike_list, T_M*ones, r*ones, sigma0*ones))
+    vols = list(map(implied_vol, *params))
+    plt.plot(Strike_list,vols,label="Implied Volatilities")
+    plt.xlabel("Strike")
+    plt.ylabel("Implied Volatility")
+    plt.title("Implied Volatilities of TTF Futures Options Expired in " + str(Month)  )
+    plt.legend(loc= 'best')
+    
