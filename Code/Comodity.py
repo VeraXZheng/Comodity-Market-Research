@@ -6,6 +6,8 @@ Created on Thu Jul  9 14:55:51 2020
 
 @author: Vera Zheng 
 """
+import matplotlib as mpl
+from mpl_toolkits.mplot3d import Axes3D
 import scipy.stats as si
 from sympy.stats import Normal, cdf
 import numpy as np
@@ -87,11 +89,12 @@ class Process:
         
         if dynamics == "Stochastic":
              sigma[0,:] = sigma0
-             dw2 = rho * dw1 + np.sqrt(1- rho **2) *dw1
+             dw2 = np.random.normal(size=(n,m))* sqrt_dt 
+             dw3 = rho * dw1 + np.sqrt(1- rho **2) *dw2
              for j in range (m):
                  for i in range(n - 1):
-                     dSigma = alpha *sigma[i,j] * dw2[i,j] 
-                     sigma[i+1,j] = sigma[i,j] + dSigma
+                   
+                     sigma[i+1,j] = sigma[i,j] +  alpha *sigma[i,j] * dw3[i,j] 
                      St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
         return St
    
@@ -112,14 +115,11 @@ class Process:
             
         """
         a = self._a
-        n = round(T / (21*dt))
-        Ft = np.zeros((n,m))
-        Ft[0,:] = F0
+       
         #save only date of interest 
         St = St[::21]
-        for j in range(m):
-            for i in range(n):
-                Ft[i,j] = F0*(1-(1-St[i,j])*np.exp(a*(i*dt-T)))
+        
+        Ft = F0*(1-(1-St)*np.exp(a*(i*dt-T)))
 
         return Ft
    
@@ -164,20 +164,77 @@ def option_bls(sigma,K,T,S):
      
  ###############main############
 class AsianBasketOption:
-    def __init__(self,weight):
+    def __init__(self,weight,a,b,c,alpha,dt,T):
        
-        
+        self._a = a
+        self._b = b
+        self._c = c
+        self._alpha = alpha
+        self._dt = dt
+        self._T = T
         self._weight = weight
    
-      
-    def pricing(self,n1,n2,F1t,F2t):
+    def simulate_correlated_paths(self,corr,nSims,nAssets,nSteps,dynamics,F0):
+        """ Inputs: S0 - stock price
+            mu - expected return
+            sig - volatility
+            corr - correlation matrix
+            dt - size of time steps
+            steps - number of time steps to calculate
+            nsims - number of simulation paths to generate
+
+            Output: F - a (steps+1)-by-nsims-by-nassets 3-dimensional matrix where
+            each row represents a time step, each column represents a
+            seperate simulation run and each 3rd dimension represents a
+             different asset.
+        """
+        a = self._a
+        b = self._b
+        c = self._c
+        alpha = self._alpha
+       
+        sigma = np.zeros((nSteps,nSims,nAssets))
+        St = np.zeros((nSteps,nSims,nAssets))
+        R = np.linalg.cholesky(corr)
+        if dynamics == "Linear":
+            sigma[0,:,:] = b * S0 + c
+            for j in range (nSims):
+                dw = np.random.normal(size=(nSteps,nAssets))
+                eps = np.dot(dw , R)
+                for i in range(nSteps - 1):
+                   
+                        sigma[i+1,j,:] = b * St[i+1,j,:] +c 
+                        St[i+1,j,:] = St[i,j,:] + (1-St[i,j,:])* a * dt + sigma[i,j,:] * St[i,j,:]*eps[i,:]
+                       
+        
+        
+        if dynamics == "Stochastic":
+             dw1 = np.random.normal(size=(nSteps,nSims))
+             dw2 = np.random.normal(size=(nSteps,nSims))
+             sigma[0,:,:] = sigma0
+             dw3 = rho * dw1 + np.sqrt(1- rho **2) *dw2
+             for j in range (nSims):
+                 dw = np.random.normal(size=(nSteps,nAssets))
+                 eps = np.dot(dw ,R)
+                 for i in range(nSteps - 1):
+                     
+                         sigma[i+1,j,:] = sigma[i,j,:] +  alpha *sigma[i,j,:] * dw3[i,j]
+                         St[i+1,j,:] = St[i,j,:] + (1-St[i,j,:])* a * dt + sigma[i,j,:] * St[i,j,:]* eps[i,:]
+        
+        #St = St[::21,:,:] 
+        Ft = F0*(1-(1-St)*np.exp(a*(i*dt-T)))  
+        return Ft         
+    
+    def pricing(self,n1,n2,Ft):
         #[n1,n2]is the interval to take averge of the future prices
         weight = self._weight
-        k=np.dot([F10,F20],weight)
-        Ftot = weight[0]*np.mean(F1t[n1:n2,:],1)+weight[1]* np.mean(F2t[n1:n2,:],1)
-      
+        k=np.dot(Ft[0,:,:],weight)
+   
+        Ftot = np.dot(np.mean(Ft[n1:n2,:,:],0),weight)
+   
         V = np.exp(-r*T)*np.maximum(Ftot - k,0)
         avgV = np.mean(V)
+    
          
         return V, avgV
     
@@ -198,7 +255,6 @@ def implied_vol(mkt_price, S, K, T_maturity, r, *args):
             sigma = sigma + diff/vega # f(x) / f'(x)
         return sigma 
   
-
 
 
 
@@ -244,9 +300,9 @@ if __name__ == "__main__":
     avgS = np.zeros((int(T/dt),len(alist)))
     avgF = np.zeros((T*12,len(alist)))
     call = np.zeros(len(alist))
-    put = np.zeros(len(alist))
+    
     SE_call = np.zeros(len(alist))
-    SE_put = np.zeros(len(alist))
+   
     for i in range(len(alist)):
         S = Process(sigma0, alist[i],m, alpha, rho,S0,blist[i],c).simulate_spot(T, dt,dynamics)
         F= Process(sigma0,a,m, alpha, rho,S0,blist[i],c).FutureDynamics(T,dt,S,F10)
@@ -257,7 +313,7 @@ if __name__ == "__main__":
     print ("Call option prices by MC method with " +str(m)+ " simulations and different MR speed are " + str(call) +\
   
            "  with Standard Error for Call " +str(SE_call))
- #plot of spot process with linear vol
+
     
     plt.figure(dpi=1000)
     for i in range(len(blist)):
@@ -277,7 +333,12 @@ if __name__ == "__main__":
     plt.title("Realization of " +str(dynamics) +"  vol futures prices dynamics")
     plt.legend(loc='best')
     plt.savefig(output_path + "Figures/linear_futures")       
-  
+    
+    
+    
+    
+   
+    
 
 ################linear vol #########################
 
@@ -287,7 +348,6 @@ if __name__ == "__main__":
     avgS = np.zeros((int(T/dt),len(blist)))
     avgF = np.zeros((T*12,len(blist)))
     call = np.zeros(len(blist))
-
     SE_call = np.zeros(len(blist))
    
     for i in range(len(blist)):
@@ -327,19 +387,80 @@ if __name__ == "__main__":
 
 ###################Asian Basket Option#########
     m=100
-    rho1 =0.4
-    rho2 =0.3
-    sigma1 =0.1
-    sigma2 = 0.1
-    alpha = 0.2
+    K0 = Strike_list[10]
+    b=0.01
+    c=0.1
+    alpha_list =[0.002,0.004,0.006,0.008,0.010,0.012,0.014,0.016,0.018,0.20]
+    a =0.3
+    alist=[0,0.15,0.3,0.45,0.6,0.75,0.9]
+    blist=np.linspace(0,0.5,20)
+    clist=np.linspace(0,0.1,30)
+    corr = ([1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1])
+    corr_list = [[[1, 0.2,0.1],[0.2,1,0.2],[0.1,0.2,1]],[[1, 0.2,0.3],[0.3,1,0.3],[0.3,0.3,1]],[[1, 0.4,0.3],[0.4,1,0.4],[0.3,0.4,1]],[[1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]],[[1, 0.6,0.5],[0.6,1,0.6],[0.5,0.6,1]],[[1, 0.7,0.6],[0.7,1,0.7],[0.6,0.7,1]],[[1, 0.8,0.7],[0.8,1,0.8],[0.8,0.7,1]],[[1, 0.9,0.8],[0.9,1,0.9],[0.8,0.5,0.9]]]
+    nSims =1000
+    nSteps = 100 #int(T/dt)
+    F0 = [5.495, 5.805, 6.49]
+    nAssets = 3
+    dynamics = "Linear"
+    weight=[1/3 , 1/3 ,1/3]
+    avgV= np.zeros((len(clist)))
+    for i in range(len(clist)):
+        
+        Ft = AsianBasketOption(weight,a,b,clist[i],alpha,dt,T).simulate_correlated_paths(corr,nSims,nAssets,nSteps,dynamics,F0)
+        V, avgV[i] = AsianBasketOption(weight,a,b,clist[i],alpha,dt,T).pricing( -30,len(Ft)-1, Ft)    
+        #print('Call price of the Asian basket Option with ' + str(nSims)+" simulations and mean reversion speed "+str(alist[i]) + " is " +str(avgV))     
+    plt.figure(dpi=1000)
+    plt.plot(clist,avgV,label="Asian Basket Price")
+    #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
+    plt.xlabel(r"$c$")
+    plt.ylabel("Price")
+    plt.title(r"Effect of Parameter $c$ in the " +str(dynamics) + " Model" )
+    plt.legend(loc= 'best')
+    plt.savefig(output_path+"Figures/SLV_c")
+
+
+ ######plot of European Option against parameters#######
+    
+
+    call = np.zeros(len(alist))
+    
+    SE_call = np.zeros(len(alist))
+   
     for i in range(len(alist)):
-        S1t = Process(sigma1, alist[i],m, alpha, rho1,S0,blist[i],c).Simulate_spot(T, dt)
-        F1t = Process(sigma1,alist[i],m, alpha,rho1,S0,blist[i],c).FutureDynamics(T,dt,S1t,F0=F10)
-        S2t = Process(sigma2, alist[i],m, alpha, rho2,S0,blist[i],c).Simulate_Stochastic(T, dt)
-        F2t = Process(sigma2,alist[i],m, alpha, rho2,S0,blist[i],c).FutureDynamics(T,dt,S2t,F0=F20)
-        V, avgV = AsianBasketOption(weight=[0.4,0.6]).pricing(0,len(F1t) , F1t, F2t)    
-        print('Call price of the Asian basket Option with ' + str(m)+" simulations and mean reversion speed "+str(alist[i]) + "is " +str(avgV))     
+        S = Process(sigma0, alist[i],m, alpha, rho,S0,b,c).simulate_spot(T, dt,"Linear")
+       
+        S_T = S[-1,:]
+        call[i],SE_call[i] = Process(sigma0, alist[i],m, alpha, rho,S0,b,c).OptionPricing(S_T, K0, r, dt, T,Future,a,"bls")
+    
+    plt.figure(dpi=1000)
+    plt.plot(alist,call,label="European Option Price")
+    plt.xlabel(r"$a$")
+    plt.ylabel("Price")
+    plt.title(r"Effect of Parameter $\alpha$ in the Linear Model"  )
+    plt.legend(loc= 'best')
+    plt.savefig(output_path+"Figures/SLV_a_EU")
            
+
+    call = np.zeros(len(alist))
+    
+    SE_call = np.zeros(len(alist))
+   
+    for i in range(len(alist)):
+        S = Process(sigma0, a,m, alist[i], rho,S0,b,c).simulate_spot(T, dt,dynamics)
+       
+        S_T = S[-1,:]
+        call[i],SE_call[i] = Process(sigma0, a,m, alist[i], rho,S0,blist,c).OptionPricing(S_T, K0, r, dt, T,Future,a,"bls")
+    
+    plt.figure(dpi=1000)
+    plt.plot(alist,call,label="European Option Price")
+    plt.xlabel(r"$a$")
+    plt.ylabel("Price")
+    plt.title(r"Effect of Parameter $a$ in the SV Model"  )
+    plt.legend(loc= 'best')
+    plt.savefig(output_path+"Figures/SV_a_EU")
+
+
+
  #############implied vol##################### 
     Month = "Sep"
     Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)    #SEPopt

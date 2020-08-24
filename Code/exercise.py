@@ -29,3 +29,15 @@ def money(l):
     
  
   return x0
+
+
+
+
+def returnx(b):
+    for i in b:
+        if i ==0:
+           print("YES")
+        else:
+            print("NO")
+
+
