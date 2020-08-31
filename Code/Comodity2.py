@@ -15,6 +15,7 @@ from scipy.stats import norm
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import fsolve
+import scipy.optimize as opt
 class Process:
     
     def __init__(self, sigma0, a,m,alpha,rho,S0,b,c):
@@ -35,7 +36,7 @@ class Process:
         S0 : float
               initial ficticious spot price
         b : float
-            param in the vol process if the dynamic is chosen to be "Quadratic"
+            param in the vol process if the dynamic is chosen to be "Linear"
         c : float
            param in the vol process if the dynamic is chosen to be "stochastic"
 
@@ -80,7 +81,7 @@ class Process:
         
         dw1 = np.random.normal(size=(n,m))* sqrt_dt 
         
-        if dynamics == "Quadratic":
+        if dynamics == "Linear":
             sigma[0,:] = b * S0 + c
             for j in range (m):
                 for i in range(n - 1):
@@ -96,7 +97,7 @@ class Process:
                  for i in range(n - 1):
                    
                      sigma[i+1,j] = sigma[i,j] +  alpha *sigma[i,j] * dw3[i,j] 
-                     St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j]^0.5 * dw1[i,j]
+                     St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
         return St
    
         
@@ -200,7 +201,7 @@ class AsianBasketOption:
         sigma1 = np.zeros((nSteps,nSims,nAssets))
         St1 = np.zeros((nSteps,nSims,nAssets))
         R = np.linalg.cholesky(corr)
-        if dynamics == "Quadratic":
+        if dynamics == "Linear":
             sigma[0,:,:] = b * S0 + c
             for j in range (nSims):
                 dw = np.random.normal(size=(nSteps,nAssets))
@@ -208,8 +209,8 @@ class AsianBasketOption:
                 for i in range(nSteps - 1):
                    
                         sigma[i+1,j,:] = b * St[i,j,:] +c 
-                       # sigma1[i+1,j,:] = b * St1[i,j,:] +c 
-                        #St1[i+1,j,:] = St1[i,j,:] + (1-St1[i,j,:])* a * dt + sigma1[i,j,:] * St1[i,j,:]*-eps[i,:]
+                        sigma1[i+1,j,:] = b * St1[i,j,:] +c 
+                        St1[i+1,j,:] = St1[i,j,:] + (1-St1[i,j,:])* a * dt + sigma1[i,j,:] * St1[i,j,:]*-eps[i,:]
                         St[i+1,j,:] = St[i,j,:] + (1-St[i,j,:])* a * dt + sigma[i,j,:] * St[i,j,:]*eps[i,:]
                        
         
@@ -225,19 +226,19 @@ class AsianBasketOption:
                  for i in range(nSteps - 1):
                      
                          sigma[i+1,j,:] = sigma[i,j,:] +  alpha *sigma[i,j,:] * dw3[i,j]
-                         St[i+1,j,:] = St[i,j,:] + (1-St[i,j,:])* a * dt + sigma[i,j,:] * St[i,j,:]^0.5* eps[i,:]
-                        # sigma1[i+1,j,:] = sigma[i,j,:] +  alpha *sigma[i,j,:] * dw3[i,j]
-                        # St1[i+1,j,:] = St[i,j,:] + (1-St[i,j,:])* a * dt + sigma[i,j,:] * St[i,j,:]^0.5 * eps[i,:]
-       # St1 = St1[::21,:,:] 
+                         St[i+1,j,:] = St[i,j,:] + (1-St[i,j,:])* a * dt + sigma[i,j,:] * St[i,j,:]* eps[i,:]
+                         sigma1[i+1,j,:] = sigma[i,j,:] +  alpha *sigma[i,j,:] * dw3[i,j]
+                         St1[i+1,j,:] = St[i,j,:] + (1-St[i,j,:])* a * dt + sigma[i,j,:] * St[i,j,:]* eps[i,:]
+        St1 = St1[::21,:,:] 
         St = St[::21,:,:] 
-       # StTot =  np.concatenate((St,St1),1)
-        Ft = F0*(1-(1-St)*np.exp(a*(i*dt-T)))  
-        return Ft   
+        StTot =  np.stack(St,St1,2)
+        Ft = F0*(1-(1-StTot)*np.exp(a*(i*dt-T)))  
+        return Ft         
     
-    def pricing(self,n1,n2,Ft,k):
+    def pricing(self,n1,n2,Ft):
         #[n1,n2]is the interval to take averge of the future prices
         weight = self._weight
-        #k=np.dot(Ft[0,:,:],weight)
+        k=np.dot(Ft[0,:,:],weight)
    
         Ftot = np.dot(np.mean(Ft[n1:n2,:,:],0),weight)
    
@@ -277,7 +278,10 @@ def find_constant(F,K,initial_guess,T,market_price):
         return difference
     return fsolve(price_difference,initial_guess)
 
-
+   
+    
+    
+  
       
    ###########################################################
 ### start main
@@ -324,10 +328,8 @@ if __name__ == "__main__":
     for i in range(len(alist)):
         S = Process(sigma0, alist[i],m, alpha, rho,S0,blist[i],c).simulate_spot(T, dt,dynamics)
         F= Process(sigma0,a,m, alpha, rho,S0,blist[i],c).FutureDynamics(T,dt,S,F10)
-        S_T=S[-1,:]
-
-        F_T=F[-1,:]
-        call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,blist[i],c).OptionPricing(S_T, K0, r, dt, T,F_T,a,"bls")
+        F_T=F[:,-1]
+        call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,blist[i],c).OptionPricing(S[:,-1], K0, r, dt, T,F_T,a,"bls")
         avgF[:,i] =  np.mean(F,1)
         avgS[:,i] = np.mean(S,1)
     print ("Call option prices by MC method with " +str(m)+ " simulations and different MR speed are " + str(call) +\
@@ -406,83 +408,37 @@ if __name__ == "__main__":
 
 
 ###################Asian Basket Option#########
-    m=1000
+    m=100
     K0 = Strike_list[10]
     b=0.01
-    c=0.2
-    alpha = 0.15
+    c=0.3
     alpha_list =[0.002,0.004,0.006,0.008,0.010,0.012,0.014,0.016,0.018,0.20]
-    a =0.08
+    a =0.1
     alist=[0,0.15,0.3,0.45,0.6,0.75,0.9]
-    blist=np.linspace(0.0,0.1,20)
+    blist=np.linspace(0,0.5,20)
     clist=np.linspace(0,0.1,30)
-    corr = ([1,0.2],[0.2,1])#([1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]) #([1,0.5],[0.5,1])
+    corr = ([1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1])
     corr_list = [[[1, 0.2,0.1],[0.2,1,0.2],[0.1,0.2,1]],[[1, 0.2,0.3],[0.3,1,0.3],[0.3,0.3,1]],[[1, 0.4,0.3],[0.4,1,0.4],[0.3,0.4,1]],[[1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]],[[1, 0.6,0.5],[0.6,1,0.6],[0.5,0.6,1]],[[1, 0.7,0.6],[0.7,1,0.7],[0.6,0.7,1]],[[1, 0.8,0.7],[0.8,1,0.8],[0.8,0.7,1]],[[1, 0.9,0.8],[0.9,1,0.9],[0.8,0.5,0.9]]]
     nSims =1000
-    nSteps = int(T/dt)
-    F0 = [5.495, 5.805]#[5.495, 5.805, 6.49]
-    nAssets = 2 #2
-    dynamics = "Quadratic"
-    weight=[1/2,1/2] #[1/3 , 1/3 ,1/3] #[1/2,1/2]
-    avgV= np.zeros((len(blist)))
-    for i in range(len(blist)):
+    nSteps = 100 #int(T/dt)
+    F0 = [5.495, 5.805, 6.49]
+    nAssets = 3
+    dynamics = "Linear"
+    weight=[1/3 , 1/3 ,1/3]
+    avgV= np.zeros((len(clist)))
+    for i in range(len(clist)):
         
-        Ft = AsianBasketOption(weight,a,blist[i],c,alpha,dt,T).simulate_correlated_paths(corr,nSims,nAssets,nSteps,dynamics,F0)
-        k=np.dot(Ft[0,:,:],weight)
-        V, avgV[i] = AsianBasketOption(weight,a,blist[i],c,alpha,dt,T).pricing( len(Ft)-3,len(Ft)-1, Ft,k)    
+        Ft = AsianBasketOption(weight,a,b,clist[i],alpha,dt,T).simulate_correlated_paths(corr,nSims,nAssets,nSteps,dynamics,F0)
+        V, avgV[i] = AsianBasketOption(weight,a,b,clist[i],alpha,dt,T).pricing( -30,len(Ft)-1, Ft)    
         #print('Call price of the Asian basket Option with ' + str(nSims)+" simulations and mean reversion speed "+str(alist[i]) + " is " +str(avgV))     
-   
     plt.figure(dpi=1000)
-    plt.plot(blist,avgV,label="Asian Basket Price")
+    plt.plot(clist,avgV,label="Asian Basket Price")
     #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
-    plt.xlabel(r"$b$")
+    plt.xlabel(r"$c$")
     plt.ylabel("Price")
-    plt.title(r"Effect of Parameter $b$ in the " +str(dynamics) + " Model" )
+    plt.title(r"Effect of Parameter $c$ in the " +str(dynamics) + " Model" )
     plt.legend(loc= 'best')
-    plt.savefig(output_path+"Figures/SLV_b")
-    
-    
-    
-    
-   
-
-
-#Price vs Strike
-
-
-    m=1000
-    K0 = Strike_list
-    b=0.01
-    c=0.1
-    alpha = 0.01
-    alpha_list =[0.002,0.004,0.006,0.008,0.010,0.012,0.014,0.016,0.018,0.20]
-    a =0.05
-    alist=[0,0.15,0.3,0.45,0.6,0.75,0.9]
-    blist=np.linspace(0,0.1,20)
-    clist=np.linspace(0,0.1,30)
-    corr = ([1,0.5],[0.5,1])#([1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]) #([1,0.5],[0.5,1])
-    corr_list = [[[1, 0.2,0.1],[0.2,1,0.2],[0.1,0.2,1]],[[1, 0.2,0.3],[0.3,1,0.3],[0.3,0.3,1]],[[1, 0.4,0.3],[0.4,1,0.4],[0.3,0.4,1]],[[1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]],[[1, 0.6,0.5],[0.6,1,0.6],[0.5,0.6,1]],[[1, 0.7,0.6],[0.7,1,0.7],[0.6,0.7,1]],[[1, 0.8,0.7],[0.8,1,0.8],[0.8,0.7,1]],[[1, 0.9,0.8],[0.9,1,0.9],[0.8,0.5,0.9]]]
-    nSims =10000
-    nSteps = int(T/dt)
-    F0 = [5.495, 5.805]#[5.495, 5.805, 6.49]
-    nAssets = 2 #2
-    dynamics = "Quadratic"
-    weight=[1/2,1/2] #[1/3 , 1/3 ,1/3] #[1/2,1/2]
-    avgV= np.zeros((len(Strike_list)))
-    for i in range(len(Strike_list)):
-        
-        Ft = AsianBasketOption(weight,a,b,c,alpha,dt,T).simulate_correlated_paths(corr,nSims,nAssets,nSteps,dynamics,F0)
-        V, avgV[i] = AsianBasketOption(weight,a,b,c,alpha,dt,T).pricing( -30,len(Ft)-1, Ft,Strike_list[i])    
-        #print('Call price of the Asian basket Option with ' + str(nSims)+" simulations and mean reversion speed "+str(alist[i]) + " is " +str(avgV))     
-   
-    plt.figure(dpi=1000)
-    plt.plot(Strike_list,avgV,label="Asian Basket Price")
-    #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
-    plt.xlabel(r"$K$")
-    plt.ylabel("Price")
-    plt.title(r"Effect of Parameter $Strike$ in the " +str(dynamics) + " Model" )
-    plt.legend(loc= 'best')
-    plt.savefig(output_path+"Figures/SLV_K")
+    plt.savefig(output_path+"Figures/SLV_c")
 
 
  ######plot of European Option against parameters#######
@@ -502,7 +458,7 @@ if __name__ == "__main__":
     plt.plot(alist,call,label="European Option Price")
     plt.xlabel(r"$a$")
     plt.ylabel("Price")
-    plt.title(r"Effect of Parameter $\alpha$ in the" +str(dynamics) + " Model" )
+    plt.title(r"Effect of Parameter $\alpha$ in the Linear Model"  )
     plt.legend(loc= 'best')
     plt.savefig(output_path+"Figures/SLV_a_EU")
            
@@ -560,7 +516,7 @@ if __name__ == "__main__":
 
     SE_call_bls = np.zeros(len(Strike_list))
     
-    S = Process(sigma0, a, m, alpha, rho,S0,blist[2],c).simulate_spot(T,dt,dynamics)
+    S = Process(sigma0, a, m, alpha, rho,S0,blist[2],c).simulate_spot(T,dt,"Linear")
     # F= Process(sigma0,a,m, alpha,rho,S0,blist[2],c).FutureDynamics(T,dt,S,F10)
 
     S_T = S[-1,:]
