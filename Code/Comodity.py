@@ -197,8 +197,9 @@ class AsianBasketOption:
        
         sigma = np.zeros((nSteps,nSims,nAssets))
         St = np.zeros((nSteps,nSims,nAssets))
-        sigma1 = np.zeros((nSteps,nSims,nAssets))
-        St1 = np.zeros((nSteps,nSims,nAssets))
+        #if incoporate control variate simulation
+        # sigma1 = np.zeros((nSteps,nSims,nAssets))
+        # St1 = np.zeros((nSteps,nSims,nAssets))
         R = np.linalg.cholesky(corr)
         if dynamics == "Quadratic":
             sigma[0,:,:] = b * S0 + c
@@ -414,7 +415,7 @@ if __name__ == "__main__":
     alpha_list =[0.002,0.004,0.006,0.008,0.010,0.012,0.014,0.016,0.018,0.20]
     a =0.08
     alist=[0,0.15,0.3,0.45,0.6,0.75,0.9]
-    blist=np.linspace(0.0,0.1,20)
+    blist=np.linspace(0.0,0.1,15)
     clist=np.linspace(0,0.1,30)
     corr = ([1,0.2],[0.2,1])#([1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]) #([1,0.5],[0.5,1])
     corr_list = [[[1, 0.2,0.1],[0.2,1,0.2],[0.1,0.2,1]],[[1, 0.2,0.3],[0.3,1,0.3],[0.3,0.3,1]],[[1, 0.4,0.3],[0.4,1,0.4],[0.3,0.4,1]],[[1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]],[[1, 0.6,0.5],[0.6,1,0.6],[0.5,0.6,1]],[[1, 0.7,0.6],[0.7,1,0.7],[0.6,0.7,1]],[[1, 0.8,0.7],[0.8,1,0.8],[0.8,0.7,1]],[[1, 0.9,0.8],[0.9,1,0.9],[0.8,0.5,0.9]]]
