@@ -266,24 +266,68 @@ def implied_vol(mkt_price, S, K, T_maturity, r, *args):
         return sigma 
   
 
-
-def find_constant(F,K,initial_guess,T,market_price):
-    
-    
-    def price_difference(initial_guess):
-        d1 = (np.log((F+initial_guess[0]) / (K+initial_guess[0])) + (r + 0.5 * initial_guess[1] ** 2) * T) / (initial_guess[1] * np.sqrt(T))
-        d2 = d1 - initial_guess[1] * np.sqrt(T)
-        bls_price = (F+initial_guess[0]) * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
-        difference = bls_price - market_price
-        return difference
-    return fsolve(price_difference,initial_guess)
+class calibration:
+     def __init__(self,a,K,T_M,Future):
+     
+        self._K =K
+        self._T_M =T_M
+        self._a = a
+        self._Future = Future
+      
+        
+        
+        
+     def find_constant(self,initial_guess,market_price,T,K,F):
+      
+        def price_difference(initial_guess):
+            d1 = (np.log((F+initial_guess[0]) / (K+initial_guess[0])) + (r + 0.5 * initial_guess[1] ** 2) * T) / (initial_guess[1] * np.sqrt(T))
+            d2 = d1 - initial_guess[1] * np.sqrt(T)
+            bls_price = (F+initial_guess[0]) * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
+            difference = bls_price - market_price
+            return difference
+        return fsolve(price_difference,initial_guess)
 
    
+     def estimateSigma(self,gamma_sigma,param,K,F,T):
+       
+       
+        a= self._a
+        
+        param=np.exp(param)
+        effective_K = F*(K*np.exp(a*T)-np.exp(T*a)+1)
+        f0 = F + gamma_sigma[0]
+        k0 = effective_K+gamma_sigma[0]
+        d1 = (np.log(f0 / k0) + (r + 0.5 * gamma_sigma[1] ** 2) * T) / (gamma_sigma[1] * np.sqrt(T))
+        d2 = d1 - gamma_sigma[1] * np.sqrt(T)
+        #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+       
+        f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
+        f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
+        f3 = f0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
+        f4 = f0*norm.pdf(d1)/(F*np.sqrt(T))
+        estimate_sigma = (f1+np.sqrt(f2+(f3*(param[0]*K+param[1])**2)))/f4
+        
+        return estimate_sigma
+     
+     def obeject_func(self,gamma_sigma_list,param):
+         estimate_sigma = np.ones((len(gamma_sigma_list)))
+         F = self._Future
+         K = self._K
+         T = self._T_M
+         for i in range(len(gamma_sigma_list)):
+             estimate_sigma[i]= self.estimateSigma(gamma_sigma_list[i],param,K[i][1],F[i],T[i])
+         return  sum(abs(gamma_sigma_list[:,0]-estimate_sigma))
     
+     def find_param(self,gamma_sigma_list,param):
+         start_params = np.array([0.01, 0.1])
+         
+         difference = lambda param: self.obeject_func(gamma_sigma_list,param)
+         #bnds = ((0,1),(0,1))
+         all_results = opt.minimize(fun=difference, x0=start_params,
+                                        method="BFGS")#bounds=bnds)
+         return all_results.x
     
-  
-      
-   ###########################################################
+    ###########################################################
 ### start main
 if __name__ == "__main__":
     output_path = "/Users/veraisice/Desktop/Comodity-Market-Research/thesis_1/"
@@ -534,3 +578,28 @@ if __name__ == "__main__":
     plt.ylabel("European Call Price")
     plt.title("European Call Price vs Strike")
     plt.savefig(output_path + "Figures/option_LV")
+    
+    
+    
+####calibration
+    initial_guess=np.array([0.5,0.5])
+    Month_List = np.array(["August","September","October"])
+    T_M = np.ones((3))
+    Future= np.ones((3))
+    market_price=np.zeros((3,2), dtype=np.ndarray)
+    K=np.zeros((3,2), dtype=np.ndarray)
+    gamma_sigma_list= np.zeros((3,2), dtype=np.ndarray)
+    for i in range(len(Month_List)):
+        Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    #SEPopt
+    #strike 
+        K[i] = Option_Data["Strike"][1:3].values
+    #market option price
+        market_price[i] = Option_Data["Call"][1:3].values
+    #time to maturity
+        T_M [i]= Option_Data["Time to Maturity"].values[0]
+    #future price
+        Future[i] = Option_Data["1-Month Future"].values[0]
+        gamma_sigma_list[i] = calibration(0.1,K,T_M,Future).find_constant(initial_guess, np.asarray(market_price[i],float), T_M[i], np.asarray(K[i],float), Future[i])
+    
+    
+    calibration(0.1,K,T_M,Future).find_param(gamma_sigma_list,param=[])

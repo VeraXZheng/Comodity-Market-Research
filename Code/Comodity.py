@@ -15,6 +15,7 @@ from scipy.stats import norm
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import fsolve
+import scipy.optimize as opt
 class Process:
     
     def __init__(self, sigma0, a,m,alpha,rho,S0,b,c):
@@ -236,6 +237,7 @@ class AsianBasketOption:
         return Ft   
     
     def pricing(self,n1,n2,Ft,k):
+      
         #[n1,n2]is the interval to take averge of the future prices
         weight = self._weight
         #k=np.dot(Ft[0,:,:],weight)
@@ -267,17 +269,67 @@ def implied_vol(mkt_price, S, K, T_maturity, r, *args):
   
 
 
-def find_constant(F,K,initial_guess,T,market_price):
-    
-    
-    def price_difference(initial_guess):
-        d1 = (np.log((F+initial_guess[0]) / (K+initial_guess[0])) + (r + 0.5 * initial_guess[1] ** 2) * T) / (initial_guess[1] * np.sqrt(T))
-        d2 = d1 - initial_guess[1] * np.sqrt(T)
-        bls_price = (F+initial_guess[0]) * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
-        difference = bls_price - market_price
-        return difference
-    return fsolve(price_difference,initial_guess)
+class calibration:
+     def __init__(self,a,K,T_M,Future):
+     
+        self._K =K
+        self._T_M =T_M
+        self._a = a
+        self._Future = Future
+      
+        
+        
+        
+     def find_constant(self,initial_guess,market_price,T,K,F):
+      
+        def price_difference(initial_guess):
+            d1 = (np.log((F+initial_guess[0]) / (K+initial_guess[0])) + (r + 0.5 * initial_guess[1] ** 2) * T) / (initial_guess[1] * np.sqrt(T))
+            d2 = d1 - initial_guess[1] * np.sqrt(T)
+            bls_price = (F+initial_guess[0]) * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
+            difference = bls_price - market_price
+            return difference
+        return fsolve(price_difference,initial_guess)
 
+   
+     def estimateSigma(self,gamma_sigma,param,K,F,T):
+       
+       
+        a= self._a
+        
+        #param=np.exp(param) #transform to restric a be postive 
+        effective_K = F*(K*np.exp(a*T)-np.exp(T*a)+1)
+        f0 = F + gamma_sigma[0]
+        k0 = effective_K+gamma_sigma[0]
+        d1 = (np.log(f0 / k0) + (r + 0.5 * gamma_sigma[1] ** 2) * T) / (gamma_sigma[1] * np.sqrt(T))
+        d2 = d1 - gamma_sigma[1] * np.sqrt(T)
+        #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+       
+        f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
+        f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
+        f3 = f0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
+        f4 = f0*norm.pdf(d1)/(F*np.sqrt(T))
+        estimate_sigma = (f1+np.sqrt(f2+(f3*(param[0]*K+param[1])**2)))/f4
+        
+        return estimate_sigma
+     
+     def obeject_func(self,gamma_sigma_list,param):
+         estimate_sigma = np.ones((len(gamma_sigma_list)))
+         F = self._Future
+         K = self._K
+         T = self._T_M
+         for i in range(len(gamma_sigma_list)):
+             estimate_sigma[i]= self.estimateSigma(gamma_sigma_list[i],param,K[i][1],F[i],T[i])
+         return  sum(abs(gamma_sigma_list[:,0]-estimate_sigma))
+    
+     def find_param(self,gamma_sigma_list,param):
+         start_params = np.array([0.01, 0.1])
+         
+         difference = lambda param: self.obeject_func(gamma_sigma_list,param)
+         #bnds = ((0,1),(0,1))
+         all_results = opt.minimize(fun=difference, x0=start_params,
+                                        method="BFGS")#bounds=bnds)
+         return all_results.x #np.exp(all_results.x) #with transformation
+    
 
       
    ###########################################################
@@ -410,16 +462,16 @@ if __name__ == "__main__":
     m=1000
     K0 = Strike_list[10]
     b=0.01
-    c=0.15
-    alpha = 0.15
+    c=0.1
+    alpha = 0.1
     alpha_list =[0.002,0.004,0.006,0.008,0.010,0.012,0.014,0.016,0.018,0.20]
     a =0.1
     alist=[0,0.15,0.3,0.45,0.6,0.75,0.9]
-    blist=np.linspace(0.0,0.15,15)
-    clist=np.linspace(0,0.1,30)
+    blist=np.linspace(0.0,0.02,25)
+    clist=np.linspace(0,0.08,30)
     corr = ([1,0.2],[0.2,1])#([1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]) #([1,0.5],[0.5,1])
     corr_list = [[[1, 0.2,0.1],[0.2,1,0.2],[0.1,0.2,1]],[[1, 0.2,0.3],[0.3,1,0.3],[0.3,0.3,1]],[[1, 0.4,0.3],[0.4,1,0.4],[0.3,0.4,1]],[[1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]],[[1, 0.6,0.5],[0.6,1,0.6],[0.5,0.6,1]],[[1, 0.7,0.6],[0.7,1,0.7],[0.6,0.7,1]],[[1, 0.8,0.7],[0.8,1,0.8],[0.8,0.7,1]],[[1, 0.9,0.8],[0.9,1,0.9],[0.8,0.5,0.9]]]
-    nSims =1000
+    nSims =10000
     nSteps = int(T/dt)
     F0 = [5.495, 5.805]#[5.495, 5.805, 6.49]
     nAssets = 2 #2
@@ -436,6 +488,7 @@ if __name__ == "__main__":
     plt.figure(dpi=1000)
     plt.plot(blist,avgV,label="Asian Basket Price")
     #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
+    plt.xticks(rotation=45, ha='right')
     plt.xlabel(r"$b$")
     plt.ylabel("Price")
     plt.title(r"Effect of Parameter $b$ in the " +str(dynamics) + " Model" )
@@ -579,3 +632,45 @@ if __name__ == "__main__":
     plt.ylabel("European Call Price")
     plt.title("European Call Price vs Strike")
     plt.savefig(output_path + "Figures/option_LV")
+    
+    
+    
+    
+    
+    
+    
+    ####calibration##################
+    initial_guess=np.array([0.5,0.5])
+    Month_List = np.array(["August","September","October"])
+    T_M = np.ones((3))
+    Future= np.ones((3))
+    market_price=np.zeros((3,2), dtype=np.ndarray)
+    K=np.zeros((3,2), dtype=np.ndarray)
+    gamma_sigma_list= np.zeros((3,2), dtype=np.ndarray)
+    for i in range(len(Month_List)):
+        Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    #SEPopt
+    #strike 
+        K[i] = Option_Data["Strike"][2:4].values
+    #market option price
+        market_price[i] = Option_Data["Call"][2:4].values
+    #time to maturity
+        T_M [i]= Option_Data["Time to Maturity"].values[0]
+    #future price
+        Future[i] = Option_Data["1-Month Future"].values[0]
+        gamma_sigma_list[i] = calibration(0.1,K,T_M,Future).find_constant(initial_guess, np.asarray(market_price[i],float), T_M[i], np.asarray(K[i],float), Future[i])
+    
+    
+    [b,c]= calibration(0.1,K,T_M,Future).find_param(gamma_sigma_list,param=[])
+    
+    #####calculate the model price######
+    Month ="Sep"
+    K_list = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)["Strike"].values   
+    S = Process(sigma0, a, m, alpha, rho,S0,b,c).simulate_spot(T,dt,"Quadratic")
+    F= Process(sigma0,a,m, alpha,rho,S0,b,c).FutureDynamics(T,dt,S,F10)
+    F_T = F[-1,:]
+    S_T = S[-1,:]
+    call = np.zeros((len(K_list)))
+    SE_call = np.zeros((len(K_list)))
+    for i in range(len(K_list)):
+     call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T, K_list[i], r, dt, T,F_T,a,"MC")
+    
