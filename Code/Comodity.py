@@ -158,11 +158,6 @@ class Process:
         return Call,  SE_call
     
    
-def option_bls(sigma,K,T,S):
-        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-        d2 = (np.log(S / K) + (r - 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-        call = (S * si.norm.cdf(d1, 0.0, 1.0) - K * np.exp(-r * T) * si.norm.cdf(d2, 0.0, 1.0))
-        return call
 
      
  ###############main############
@@ -252,19 +247,44 @@ class AsianBasketOption:
     
 
    
-def implied_vol(mkt_price, S, K, T_maturity, r, *args):
-        Max_iteration = 500
+def implied_vol(mkt_price, F, K, T_maturity, r,gamma,Type, *args):
+        Max_iteration = 5000
         PRECISION = 1.0e-5
         sigma = 0.5
-        for i in range(0, Max_iteration):
-            d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-            d2 = d1 - sigma * np.sqrt(T)
-            bls_price = S * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
-            vega = S * norm.pdf(d1) * np.sqrt(T)
-            diff = mkt_price - bls_price  
-            if (abs(diff) < PRECISION):
-                return sigma
+        #1 for market
+        if Type ==1:
+            for i in range(0, Max_iteration):
+                d1 = (np.log(F/ K) + (r + 0.5 * sigma ** 2) * T_maturity) / (sigma * np.sqrt(T_maturity))
+                d2 = d1 - sigma * np.sqrt(T)
+                bls_price = F * norm.cdf(d1) - np.exp(-r * T_maturity) * K * norm.cdf(d2)
+                vega = F * norm.pdf(d1) * np.sqrt(T_maturity)
+                diff = mkt_price - bls_price  
+                if (abs(diff) < PRECISION):
+                    return sigma
             sigma = sigma + diff/vega # f(x) / f'(x)
+        
+        if Type==2:
+           
+            K=1-np.exp(-a*T)*(1-K/F0)
+            f0 = F + gamma
+            k0 = K*F + gamma
+       
+            for i in range(0, Max_iteration):
+            
+                d1 = (np.log(f0 / k0) + (r + 0.5 * sigma ** 2) * T_maturity) / (sigma * np.sqrt(T_maturity))
+         
+                d2 = d1 - sigma * np.sqrt(T_maturity)
+                bls_price = np.exp(a*T_maturity) *(f0*norm.cdf(d1)-k0*norm.cdf(d2))/F
+       
+            # d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+            # d2 = d1 - sigma * np.sqrt(T)
+            # bls_price = S * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
+                vega =   np.exp(a*T_maturity)*f0* norm.pdf(d1) * np.sqrt(T_maturity)/F
+                diff = mkt_price - bls_price  
+                if (abs(diff) < PRECISION):
+                    return sigma
+            sigma = sigma + diff/vega # f(x) / f'(x)
+        
         return sigma 
   
 
@@ -296,10 +316,10 @@ class calibration:
        
         a= self._a
         
-        #param=np.exp(param) #transform to restric a be postive 
-        effective_K = F*(K*np.exp(a*T)-np.exp(T*a)+1)
+        param=np.exp(param) #transform to restric a be postive 
+        effective_K = 1-np.exp(-a*T)*(1-K/F)
         f0 = F + gamma_sigma[0]
-        k0 = effective_K+gamma_sigma[0]
+        k0 = effective_K*F+gamma_sigma[0]
         d1 = (np.log(f0 / k0) + (r + 0.5 * gamma_sigma[1] ** 2) * T) / (gamma_sigma[1] * np.sqrt(T))
         d2 = d1 - gamma_sigma[1] * np.sqrt(T)
         #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
@@ -327,8 +347,8 @@ class calibration:
          difference = lambda param: self.obeject_func(gamma_sigma_list,param)
          #bnds = ((0,1),(0,1))
          all_results = opt.minimize(fun=difference, x0=start_params,
-                                        method="BFGS")#bounds=bnds)
-         return all_results.x #np.exp(all_results.x) #with transformation
+                                      method="BFGS")#bounds=bnds)
+         return np.exp(all_results.x)#all_results.x #np.exp(all_results.x) #with transformation
     
 
       
@@ -640,6 +660,7 @@ if __name__ == "__main__":
     
     
     ####calibration##################
+    r=0
     initial_guess=np.array([0.5,0.5])
     Month_List = np.array(["August","September","October"])
     T_M = np.ones((3))
@@ -664,13 +685,52 @@ if __name__ == "__main__":
     
     #####calculate the model price######
     Month ="Sep"
-    K_list = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)["Strike"].values   
+    sigma0= 0.1
+    a = 0.1
+    m = 1000
+    alpha = 0.1
+    rho =0.2
+    S0=1
+    T=1
+    dt=T/252
+    Option_data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)
+    F0 =  Option_data["1-Month Future"].values[0]   
+    K_list = Option_data["Strike"].values 
+    ##effective strike
+    effective_K = 1-np.exp(-a*T)*(1-K_list/F0)
+    
+    
+    
+    #time to maturity
+    T_M = Option_data["Time to Maturity"].values[0]
+    Call_list = Option_data["Call"].values
+    c_mkt = Call_list*np.exp(a*T_M)/F0
+   
     S = Process(sigma0, a, m, alpha, rho,S0,b,c).simulate_spot(T,dt,"Quadratic")
-    F= Process(sigma0,a,m, alpha,rho,S0,b,c).FutureDynamics(T,dt,S,F10)
+    F= Process(sigma0,a,m, alpha,rho,S0,b,c).FutureDynamics(T,dt,S,F0)
     F_T = F[-1,:]
     S_T = S[-1,:]
     call = np.zeros((len(K_list)))
     SE_call = np.zeros((len(K_list)))
     for i in range(len(K_list)):
-     call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T, K_list[i], r, dt, T,F_T,a,"MC")
+     call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T,K_list[i], r, dt, T,F_T,0.01,"MC")
+    
+    c_model = call*np.exp(a*T_M)/F0
+    ###implied vol from the model prices
+    ones =np.ones(np.size(c_mkt))        
+    params = np.vstack((call, F0*ones, K_list, T_M*ones, r*ones,gamma_sigma_list[1][0]*ones,2*ones))
+    vols = list(map(implied_vol, *params))
+    
+    ###implied vol from the market prices
+    params_mkt = np.vstack((Call_list, F0*ones,K_list, T_M*ones, r*ones,gamma_sigma_list[1][0]*ones,1*ones))
+    vols_mkt = list(map(implied_vol, *params_mkt))
+    
+    
+    plt.figure(dpi=1000)
+    plt.plot(effective_K[5:],vols[5:],label="Model Implied Volatilities")
+    plt.plot(effective_K[8:],vols_mkt[8:],label="Market Implied Volatilities")
+    plt.xlabel("Strike")
+    plt.ylabel("Implied Volatility")
+    plt.title("Implied Volatilities of TTF Futures Options Expired in " + str(Month)  )
+    plt.legend(loc= 'best')
     
