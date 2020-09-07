@@ -318,7 +318,26 @@ class calibration:
              estimate_sigma[i]= self.estimateSigma(gamma_sigma_list[i],param,K[i][1],F[i],T[i])
          return  sum(abs(gamma_sigma_list[:,0]-estimate_sigma))
     
-     def find_param(self,gamma_sigma_list,param):
+     
+        
+     def dSigdk(self,Sig):
+           
+             
+         k0 = F*(K*np.exp(a*T)-np.exp(T*a)+1)
+         d1 = (np.log(F / k0) + (r + 0.5 * Sig ** 2) * T) / (Sig * np.sqrt(T))
+         d2 = d1 - gamma_sigma[1] * np.sqrt(T)
+        #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+             
+         f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
+         f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
+         dadk = 2*a*(K-1)*norm.pdf(d2)*np.exp(a*T)/(k0*Sig)-2*a*np.cdf(d2)*np.exp(a*T)
+         dbdk= 2*a*(K-1)*norm.pdf(d2)*np.exp(2*a*T)*F/(k0*Sig*np.sqrt(T))-(np.exp(a*T)-1)/k0**2
+         dcdk=(d1*np.pdf(d1)*F*np.exp(a*T))/(Sig*T*k0)
+         dsigdk=T*((dadk+dbdk)*np.pdf(d1)/np.sqrt(T)-dcdk*(f1+np.sqrt(f2+F**2*np.pdf(d1)**2*np.exp(a*T)*K**2*eta**2)))/np.pdf(d1)**2
+         return dsigdk   
+        
+        
+        def find_param(self,gamma_sigma_list,param):
          start_params = np.array([0.01, 0.1])
          
          difference = lambda param: self.obeject_func(gamma_sigma_list,param)
@@ -326,7 +345,31 @@ class calibration:
          all_results = opt.minimize(fun=difference, x0=start_params,
                                         method="BFGS")#bounds=bnds)
          return all_results.x
-    
+         
+     def AA_algorithm(sig_mkt):
+             eta=0.2 #market volatilities
+             Max_iteration = 500
+             PRECISION = 1.0e-5
+             
+             
+             k0 = F*(K*np.exp(a*T)-np.exp(T*a)+1)
+             d1 = (np.log(F / k0) + (r + 0.5 * gamma_sigma[1] ** 2) * T) / (gamma_sigma[1] * np.sqrt(T))
+             d2 = d1 - gamma_sigma[1] * np.sqrt(T)
+        #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+             
+             f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
+             f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
+             f3 = f0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
+             f4 = f0*norm.pdf(d1)/(F*np.sqrt(T))
+             
+             for i in range(0, Max_iteration):
+                 sigma = (f1+np.sqrt(f2+(f3*(eta**2))))/f4
+                 diff = sigma-sigma_mkt
+                 if (abs(diff) < PRECISION):
+                     return sigma
+                 else:
+                     eta = eat*sigma_mkt/sigma+2*(self.dSigdk(sig_mkt)-self.dSigdk(sigma))*delta_k
+             return eta
     ###########################################################
 ### start main
 if __name__ == "__main__":

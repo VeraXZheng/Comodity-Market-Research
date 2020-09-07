@@ -151,7 +151,7 @@ class Process:
                
                 call = (S_T * si.norm.cdf(d1, 0.0, 1.0) - K * np.exp(-r * T) * si.norm.cdf(d2, 0.0, 1.0))*F_T
 
-        Call = np.exp(-r*T)* np.sum(call)/m  *np.exp(-a*T)
+        Call = np.exp(-r*T)* np.sum(call)/m *np.exp(-a*T)
         
         SE_call = np.sqrt(sum(call-Call)/(m*(m-1)))
        
@@ -253,6 +253,9 @@ def implied_vol(mkt_price, F, K, T_maturity, r,gamma,Type, *args):
         sigma = 0.5
         #1 for market
         if Type ==1:
+            
+            F = F + gamma
+            K = K  + gamma
             for i in range(0, Max_iteration):
                 d1 = (np.log(F/ K) + (r + 0.5 * sigma ** 2) * T_maturity) / (sigma * np.sqrt(T_maturity))
                 d2 = d1 - sigma * np.sqrt(T)
@@ -262,6 +265,7 @@ def implied_vol(mkt_price, F, K, T_maturity, r,gamma,Type, *args):
                 if (abs(diff) < PRECISION):
                     return sigma
             sigma = sigma + diff/vega # f(x) / f'(x)
+        
         
         if Type==2:
            
@@ -275,10 +279,6 @@ def implied_vol(mkt_price, F, K, T_maturity, r,gamma,Type, *args):
          
                 d2 = d1 - sigma * np.sqrt(T_maturity)
                 bls_price = np.exp(a*T_maturity) *(f0*norm.cdf(d1)-k0*norm.cdf(d2))/F
-       
-            # d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-            # d2 = d1 - sigma * np.sqrt(T)
-            # bls_price = S * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
                 vega =   np.exp(a*T_maturity)*f0* norm.pdf(d1) * np.sqrt(T_maturity)/F
                 diff = mkt_price - bls_price  
                 if (abs(diff) < PRECISION):
@@ -328,7 +328,7 @@ class calibration:
         f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
         f3 = f0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
         f4 = f0*norm.pdf(d1)/(F*np.sqrt(T))
-        estimate_sigma = (f1+np.sqrt(f2+(f3*(param[0]*K+param[1])**2)))/f4
+        estimate_sigma = (f1+np.sqrt(f2+(f3*(param[0]*K+param[1])**2)/(k0**2*np.sqrt(T))))/f4
         
         return estimate_sigma
      
@@ -350,8 +350,52 @@ class calibration:
                                       method="BFGS")#bounds=bnds)
          return np.exp(all_results.x)#all_results.x #np.exp(all_results.x) #with transformation
     
-
-      
+     def dSigdk(self,Sig,eta,F,K):
+           
+           
+         k0 = 1-np.exp(-a*T)*(1-K/F)
+         d1 = (np.log(F / k0) + (r + 0.5 * Sig ** 2) * T) / (Sig * np.sqrt(T))
+         d2 = d1 - Sig * np.sqrt(T)
+        #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+             
+         f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
+         f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
+         dadk = 2*a*(K-1)*norm.pdf(d2)*np.exp(a*T)/(k0*Sig)-2*a*norm.cdf(d2)*np.exp(a*T)
+         dbdk= 2*a*(K-1)*norm.pdf(d2)*np.exp(2*a*T)*F/(k0*Sig*np.sqrt(T))-(np.exp(a*T)-1)/k0**2
+         dcdk=(d1*norm.pdf(d1)*F*np.exp(a*T))/(Sig*T*k0)
+         dsigdk=T*((dadk+dbdk)*norm.pdf(d1)/np.sqrt(T)-dcdk*(f1+np.sqrt(f2+F**2*norm.pdf(d1)**2*np.exp(a*T)*K**2*eta**2)))/norm.pdf(d1)**2
+         return dsigdk   
+        
+        
+     def AA_algorithm(self,sig_mkt,delta_k,K,F0,*args):
+             eta=0.2 #market volatilities
+             Max_iteration = 500
+             PRECISION = 1.0e-5
+             
+             
+           
+             T = self._T_M
+             k0 = F0*(K*np.exp(a*T)-np.exp(T*a)+1)
+             d1 = (np.log(F0 / k0) + (r + 0.5 * sig_mkt ** 2) * T) / (sig_mkt * np.sqrt(T))
+             d2 = d1 - sig_mkt * np.sqrt(T)
+         
+        #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+         
+             f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
+             f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
+             f3 = F0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
+             f4 = F0*norm.pdf(d1)/(F0*np.sqrt(T))
+             
+             for i in range(0, Max_iteration):
+                 sigma = (f1+np.sqrt(f2+(f3*(eta**2)/(k0**2*np.sqrt(T)))))/f4
+                 diff = sigma-sig_mkt
+                 
+                 if (abs(diff) < PRECISION):
+                     return sigma
+                 else:
+                     eta = eta*sig_mkt/sigma+2*(self.dSigdk(sig_mkt,eta,F0,K)-self.dSigdk(sigma,eta,F0,K))*delta_k
+             return eta 
+         
    ###########################################################
 ### start main
 if __name__ == "__main__":
@@ -669,7 +713,7 @@ if __name__ == "__main__":
     K=np.zeros((3,2), dtype=np.ndarray)
     gamma_sigma_list= np.zeros((3,2), dtype=np.ndarray)
     for i in range(len(Month_List)):
-        Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    #SEPopt
+        Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    
     #strike 
         K[i] = Option_Data["Strike"][2:4].values
     #market option price
@@ -684,7 +728,7 @@ if __name__ == "__main__":
     [b,c]= calibration(0.1,K,T_M,Future).find_param(gamma_sigma_list,param=[])
     
     #####calculate the model price######
-    Month ="Sep"
+    Month ="August"
     sigma0= 0.1
     a = 0.1
     m = 1000
@@ -699,12 +743,12 @@ if __name__ == "__main__":
     ##effective strike
     effective_K = 1-np.exp(-a*T)*(1-K_list/F0)
     
-    
+    ones =np.ones(np.size(K_list))   
     
     #time to maturity
     T_M = Option_data["Time to Maturity"].values[0]
     Call_list = Option_data["Call"].values
-    c_mkt = Call_list*np.exp(a*T_M)/F0
+    c_mkt = Call_list*np.exp(a*T_M)/F0 ##call price on the normalised spot
    
     S = Process(sigma0, a, m, alpha, rho,S0,b,c).simulate_spot(T,dt,"Quadratic")
     F= Process(sigma0,a,m, alpha,rho,S0,b,c).FutureDynamics(T,dt,S,F0)
@@ -713,12 +757,12 @@ if __name__ == "__main__":
     call = np.zeros((len(K_list)))
     SE_call = np.zeros((len(K_list)))
     for i in range(len(K_list)):
-     call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T,K_list[i], r, dt, T,F_T,0.01,"MC")
+     call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T,K_list[i],r,dt,T,F_T,a,"bls")
     
-    c_model = call*np.exp(a*T_M)/F0
+    c_model = call*np.exp(a*T_M)/F0 #call price on the normalised spot
     ###implied vol from the model prices
-    ones =np.ones(np.size(c_mkt))        
-    params = np.vstack((call, F0*ones, K_list, T_M*ones, r*ones,gamma_sigma_list[1][0]*ones,2*ones))
+         
+    params = np.vstack((c_model, F0*ones, K_list, T_M*ones, r*ones,gamma_sigma_list[1][0]*ones,2*ones))
     vols = list(map(implied_vol, *params))
     
     ###implied vol from the market prices
@@ -726,11 +770,15 @@ if __name__ == "__main__":
     vols_mkt = list(map(implied_vol, *params_mkt))
     
     
+    params_AA= np.vstack((vols_mkt,0.5*ones,K_list,F0*ones))
+    eta_AA = list(map(calibration(a, K, T_M, Future).AA_algorithm,*params_AA))
+   
+    
     plt.figure(dpi=1000)
-    plt.plot(effective_K[5:],vols[5:],label="Model Implied Volatilities")
-    plt.plot(effective_K[8:],vols_mkt[8:],label="Market Implied Volatilities")
+    plt.plot(effective_K,vols,label="Model Implied Volatilities")
+    plt.plot(effective_K,vols_mkt,label="Market Implied Volatilities")
     plt.xlabel("Strike")
     plt.ylabel("Implied Volatility")
     plt.title("Implied Volatilities of TTF Futures Options Expired in " + str(Month)  )
     plt.legend(loc= 'best')
-    
+    plt.savefig(output_path + "Figures/IV_model_mkt")
