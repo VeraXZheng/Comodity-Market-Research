@@ -16,6 +16,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import fsolve
 import scipy.optimize as opt
+from scipy.special import ndtr
 class Process:
     
     def __init__(self, sigma0, a,m,alpha,rho,S0,b,c):
@@ -65,7 +66,7 @@ class Process:
         St: spot prices dynamics
             
         """
-        n = round(T / dt)
+        n = int(T / dt)
         a = self._a
         m = self._m
         b = self._b
@@ -245,47 +246,22 @@ class AsianBasketOption:
          
         return V, avgV
     
-
-   
-def implied_vol(mkt_price, F, K, T_maturity, r,gamma,Type, *args):
-        Max_iteration = 5000
+# 
+def implied_vol(mkt_price, F, K, T_maturity, r, *args):
+        Max_iteration = 500
         PRECISION = 1.0e-5
-        sigma = 0.5
-        #1 for market
-        if Type ==1:
-            
-            F = F + gamma
-            K = K  + gamma
-            for i in range(0, Max_iteration):
-                d1 = (np.log(F/ K) + (r + 0.5 * sigma ** 2) * T_maturity) / (sigma * np.sqrt(T_maturity))
-                d2 = d1 - sigma * np.sqrt(T)
-                bls_price = F * norm.cdf(d1) - np.exp(-r * T_maturity) * K * norm.cdf(d2)
-                vega = F * norm.pdf(d1) * np.sqrt(T_maturity)
-                diff = mkt_price - bls_price  
-                if (abs(diff) < PRECISION):
-                    return sigma
+        sigma = 0.4
+        for i in range(0, Max_iteration):
+            d1 = (np.log(F / K) + (r + 0.5 * sigma ** 2) * T_maturity) / (sigma * np.sqrt(T_maturity))
+            d2 = d1 - sigma * np.sqrt(T_maturity)
+            bls_price = F * ndtr(d1) - np.exp(-r * T_maturity) * K * ndtr(d2)
+            vega = F * norm._pdf(d1) * np.sqrt(T_maturity)
+            diff = mkt_price - bls_price  
+            if (abs(diff) < PRECISION):
+                return sigma
             sigma = sigma + diff/vega # f(x) / f'(x)
-        
-        
-        if Type==2:
-           
-            K=1-np.exp(-a*T)*(1-K/F0)
-            f0 = F + gamma
-            k0 = K*F + gamma
-       
-            for i in range(0, Max_iteration):
-            
-                d1 = (np.log(f0 / k0) + (r + 0.5 * sigma ** 2) * T_maturity) / (sigma * np.sqrt(T_maturity))
-         
-                d2 = d1 - sigma * np.sqrt(T_maturity)
-                bls_price = np.exp(a*T_maturity) *(f0*norm.cdf(d1)-k0*norm.cdf(d2))/F
-                vega =   np.exp(a*T_maturity)*f0* norm.pdf(d1) * np.sqrt(T_maturity)/F
-                diff = mkt_price - bls_price  
-                if (abs(diff) < PRECISION):
-                    return sigma
-            sigma = sigma + diff/vega # f(x) / f'(x)
-        
         return sigma 
+ 
   
 
 
@@ -293,30 +269,50 @@ class calibration:
      def __init__(self,a,K,T_M,Future):
      
         self._K =K
-        self._T_M =T_M
+        self._T =T_M
         self._a = a
-        self._Future = Future
+        self._F = Future
+     
+       
+        
+        
+     
       
+     def price_difference(self,param,K,F,T,market_price):
         
-        
-        
-     def find_constant(self,initial_guess,market_price,T,K,F):
-      
-        def price_difference(initial_guess):
-            d1 = (np.log((F+initial_guess[0]) / (K+initial_guess[0])) + (r + 0.5 * initial_guess[1] ** 2) * T) / (initial_guess[1] * np.sqrt(T))
-            d2 = d1 - initial_guess[1] * np.sqrt(T)
-            bls_price = (F+initial_guess[0]) * norm.cdf(d1) - np.exp(-r * T) * K * norm.cdf(d2)
-            difference = bls_price - market_price
-            return difference
-        return fsolve(price_difference,initial_guess)
-
-   
+         d1 = (np.log((F+param[0]) / (K+param[0])) + (r + 0.5 * param[1] ** 2) * T) / (param[1] * np.sqrt(T))
+         d2 = d1 - param[1] * np.sqrt(T)
+         bls_price = (F+param[0]) * ndtr(d1) - np.exp(-r * T) * K * ndtr(d2)
+         difference = bls_price - market_price
+         return abs(difference)
+       
+     def sum_difference(self,K,F,T,market_price,param):
+        diff = np.ones(len(K))
+        for i in range(len(K)):
+           
+            diff[i]=self.price_difference(param,K[i],F,T,market_price[i])
+         
+            if abs(K[i]-F)<1:
+                diff[i]=10000*diff[i]
+            else:
+                diff[i]=diff[i]
+        return sum(diff)
+     
+     def optimise(self,K,F,T,market_price,param):
+         start_params = np.array([0.01, 0.1])
+         
+         sum_diff = lambda param: self.sum_difference(K,F,T,market_price,param)
+         #bnds = ((0,1),(0,1))
+         all_results = opt.minimize(fun=sum_diff, x0=start_params,
+                                        method="BFGS")#bounds=bnds)
+         return all_results.x
+          
      def estimateSigma(self,gamma_sigma,param,K,F,T):
        
        
         a= self._a
         
-        param=np.exp(param) #transform to restric a be postive 
+        #param=np.exp(param) #transform to restrict a to be postive 
         effective_K = 1-np.exp(-a*T)*(1-K/F)
         f0 = F + gamma_sigma[0]
         k0 = effective_K*F+gamma_sigma[0]
@@ -324,77 +320,97 @@ class calibration:
         d2 = d1 - gamma_sigma[1] * np.sqrt(T)
         #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
        
-        f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
-        f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
-        f3 = f0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
-        f4 = f0*norm.pdf(d1)/(F*np.sqrt(T))
-        estimate_sigma = (f1+np.sqrt(f2+(f3*(param[0]*K+param[1])**2)/(k0**2*np.sqrt(T))))/f4
+        f1 = -2*a*(effective_K -1)*ndtr(d2)*np.exp(a*T)
+        f2 = 4*a**2*(effective_K -1)**2*ndtr(d2)**2*np.exp(2*a*T)
+        f3 = f0**2 * norm.pdf(d1)**2*np.exp(a*T)*effective_K **2
+        f4 = f0*norm._pdf(d1)/(F*np.sqrt(T))
+        estimate_sigma = (f1+np.sqrt(f2+(f3*(param[0]*effective_K +param[1])**2)/(k0**2*np.sqrt(T))))/f4
         
         return estimate_sigma
-     
-     def obeject_func(self,gamma_sigma_list,param):
-         estimate_sigma = np.ones((len(gamma_sigma_list)))
-         F = self._Future
-         K = self._K
-         T = self._T_M
-         for i in range(len(gamma_sigma_list)):
-             estimate_sigma[i]= self.estimateSigma(gamma_sigma_list[i],param,K[i][1],F[i],T[i])
-         return  sum(abs(gamma_sigma_list[:,0]-estimate_sigma))
     
-     def find_param(self,gamma_sigma_list,param):
+    
+   
+        
+     
+     def obeject_func(self,gamma_sigma_list,F,K,T,param):
+         
+         
+         n= np.shape(K)[0]
+         diff = np.ones(n)
+         for i in range (n):
+             diff[i]= abs(gamma_sigma_list[1]- self.estimateSigma(gamma_sigma_list,param,K[i],F,T))
+        
+             if abs(K[i]-F)<1:
+                diff[i]=10000*diff[i]
+             else:
+                diff[i]=diff[i]
+        
+         return  sum(diff)
+    
+     
+        
+   
+        
+        
+     def find_param(self,gamma_sigma_list,F,K,T,param):
          start_params = np.array([0.01, 0.1])
          
-         difference = lambda param: self.obeject_func(gamma_sigma_list,param)
+         difference = lambda param: self.obeject_func(gamma_sigma_list,F,K,T,param)
          #bnds = ((0,1),(0,1))
          all_results = opt.minimize(fun=difference, x0=start_params,
-                                      method="BFGS")#bounds=bnds)
-         return np.exp(all_results.x)#all_results.x #np.exp(all_results.x) #with transformation
+                                        method="BFGS")#bounds=bnds)
+         return all_results.x
+         
     
-     def dSigdk(self,Sig,eta,F,K):
+     # def dSigdk(self,Sig,eta,F,K):
            
            
-         k0 = 1-np.exp(-a*T)*(1-K/F)
-         d1 = (np.log(F / k0) + (r + 0.5 * Sig ** 2) * T) / (Sig * np.sqrt(T))
-         d2 = d1 - Sig * np.sqrt(T)
-        #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+     #     k = 1-np.exp(-a*T)*(1-K/F)
+     #     k0=F0*k
+     #     d1 = (np.log(F / k0) + (r + 0.5 * Sig ** 2) * T) / (Sig * np.sqrt(T))
+     #     d2 = d1 - Sig * np.sqrt(T)
+     #    #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
              
-         f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
-         f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
-         dadk = 2*a*(K-1)*norm.pdf(d2)*np.exp(a*T)/(k0*Sig)-2*a*norm.cdf(d2)*np.exp(a*T)
-         dbdk= 2*a*(K-1)*norm.pdf(d2)*np.exp(2*a*T)*F/(k0*Sig*np.sqrt(T))-(np.exp(a*T)-1)/k0**2
-         dcdk=(d1*norm.pdf(d1)*F*np.exp(a*T))/(Sig*T*k0)
-         dsigdk=T*((dadk+dbdk)*norm.pdf(d1)/np.sqrt(T)-dcdk*(f1+np.sqrt(f2+F**2*norm.pdf(d1)**2*np.exp(a*T)*K**2*eta**2)))/norm.pdf(d1)**2
-         return dsigdk   
+     #     f1 = -2*a*(k-1)*norm.cdf(d2)*np.exp(a*T)
+     #     f2 = 4*a**2*(k-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
+     #     dadk = 2*a*(k-1)*norm.pdf(d2)*np.exp(a*T)/(k0*Sig)-2*a*norm.cdf(d2)*np.exp(a*T)
+     #     dbdk= -dadk-norm.pdf(d1)**2*np.exp(a*T)*Sig**2/(2*np.sqrt(T))
+     #     dcdk=(d1*norm.pdf(d1)*F*np.exp(a*T))/(Sig*T*k0)
+     #     dsigdk=T*((dadk+dbdk)*norm.pdf(d1)/np.sqrt(T)-dcdk*(f1+np.sqrt(f2+F**2*norm.pdf(d1)**2*np.exp(a*T)*k**2*eta**2)))/norm.pdf(d1)**2
+     #     return dsigdk   
+        
+    
         
         
-     def AA_algorithm(self,sig_mkt,delta_k,K,F0,*args):
-             eta=0.2 #market volatilities
-             Max_iteration = 500
-             PRECISION = 1.0e-5
+     # def AA_algorithm(self,sig_mkt,delta_k,K,F0,*args):
+     #         eta=0.5 #market volatilities
+     #         Max_iteration = 500
+     #         PRECISION = 1.0e-5
              
              
            
-             T = self._T_M
-             k0 = F0*(K*np.exp(a*T)-np.exp(T*a)+1)
-             d1 = (np.log(F0 / k0) + (r + 0.5 * sig_mkt ** 2) * T) / (sig_mkt * np.sqrt(T))
-             d2 = d1 - sig_mkt * np.sqrt(T)
+     #         # T = self._T_M
+     #         k = 1-np.exp(-a*T)*(1-K/F0)#F0*(K*np.exp(a*T)-np.exp(T*a)+1)
+     #         k0=k*F0
+     #         d1 = (np.log(F0 / k0) + (r + 0.5 * sig_mkt ** 2) * T) / (sig_mkt * np.sqrt(T))
+     #         d2 = d1 - sig_mkt * np.sqrt(T)
          
-        #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+     #    #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
          
-             f1 = -2*a*(K-1)*norm.cdf(d2)*np.exp(a*T)
-             f2 = 4*a**2*(K-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
-             f3 = F0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
-             f4 = F0*norm.pdf(d1)/(F0*np.sqrt(T))
+     #         f1 = -2*a*(k-1)*norm.cdf(d2)*np.exp(a*T)
+     #         f2 = 4*a**2*(k-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
+     #         f3 = F0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
+     #         f4 = F0*norm.pdf(d1)/(F0*np.sqrt(T))
              
-             for i in range(0, Max_iteration):
-                 sigma = (f1+np.sqrt(f2+(f3*(eta**2)/(k0**2*np.sqrt(T)))))/f4
-                 diff = sigma-sig_mkt
+     #         for i in range(0, Max_iteration):
+     #             sigma = (f1+np.sqrt(f2+(f3*(eta**2)/(k0**2*np.sqrt(T)))))/f4
+     #             diff = sigma-sig_mkt
                  
-                 if (abs(diff) < PRECISION):
-                     return sigma
-                 else:
-                     eta = eta*sig_mkt/sigma+2*(self.dSigdk(sig_mkt,eta,F0,K)-self.dSigdk(sigma,eta,F0,K))*delta_k
-             return eta 
+     #             if (abs(diff) < PRECISION):
+     #                 return sigma
+     #             else:
+     #                 eta = eta*sig_mkt/sigma+2*(self.dSigdk(sig_mkt,eta,F0,K)-self.dSigdk(sigma,eta,F0,K))*delta_k
+     #         return eta 
          
    ###########################################################
 ### start main
@@ -704,81 +720,125 @@ if __name__ == "__main__":
     
     
     ####calibration##################
-    r=0
-    initial_guess=np.array([0.5,0.5])
-    Month_List = np.array(["August","September","October"])
-    T_M = np.ones((3))
-    Future= np.ones((3))
-    market_price=np.zeros((3,2), dtype=np.ndarray)
-    K=np.zeros((3,2), dtype=np.ndarray)
-    gamma_sigma_list= np.zeros((3,2), dtype=np.ndarray)
+    a=0.103
+    Month_List = np.array(["August","September","October","November"])
+    
+    T_M = np.ones((len(Month_List)))
+    Future= np.ones((len(Month_List)))
+    market_price=np.zeros((len(Month_List),10), dtype=np.ndarray)
+    K=np.zeros((len(Month_List),10), dtype=np.ndarray)
+    gamma_sigma_list= np.zeros((len(Month_List),2), dtype=np.ndarray)
     for i in range(len(Month_List)):
-        Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    
+        Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    #SEPopt
     #strike 
-        K[i] = Option_Data["Strike"][2:4].values
+        K[i] = Option_Data["Strike"].values
     #market option price
-        market_price[i] = Option_Data["Call"][2:4].values
+        market_price[i] = Option_Data["Call"].values
     #time to maturity
-        T_M [i]= Option_Data["Time to Maturity"].values[0]
+        T_M[i]= Option_Data["Time to Maturity"].values[0]
     #future price
         Future[i] = Option_Data["1-Month Future"].values[0]
-        gamma_sigma_list[i] = calibration(0.1,K,T_M,Future).find_constant(initial_guess, np.asarray(market_price[i],float), T_M[i], np.asarray(K[i],float), Future[i])
+        gamma_sigma_list[i]= calibration(a, K, T_M, Future).optimise(np.asarray(K[i],float), Future[i],T_M[i],np.asarray(market_price[i],float),param=[])
     
     
-    [b,c]= calibration(0.1,K,T_M,Future).find_param(gamma_sigma_list,param=[])
+    ####Calibration for different months
+    c= np.ones(len(Month_List))
+    b= np.ones(len(Month_List))
+    for i in range(len(Month_List)):  
     
+         b[i],c[i]=calibration(a, K, T_M, Future).find_param(gamma_sigma_list[i],Future[i],K[i],T_M[i],param=[])
+         print("Calibration Result for "+str(Month_List[i])+ " is b=" +str(b[i])+" and c=" +str(c[i]))
     #####calculate the model price######
-    Month ="August"
-    sigma0= 0.1
-    a = 0.1
-    m = 1000
-    alpha = 0.1
-    rho =0.2
+    Month ="October"
+    sigma0= gamma_sigma_list[2][1]
+    a1 = 0.10312
+    a2=0.1527
+    a3=0.1522
+    m = 10000
+    alpha = 0.2
+    rho =0.15
     S0=1
-    T=1
-    dt=T/252
+    #
+    
+    dt=1/252
     Option_data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)
     F0 =  Option_data["1-Month Future"].values[0]   
     K_list = Option_data["Strike"].values 
-    ##effective strike
-    effective_K = 1-np.exp(-a*T)*(1-K_list/F0)
+    T_M = Option_Data["Time to Maturity"].values[0]
+   
     
     ones =np.ones(np.size(K_list))   
     
     #time to maturity
     T_M = Option_data["Time to Maturity"].values[0]
     Call_list = Option_data["Call"].values
-    c_mkt = Call_list*np.exp(a*T_M)/F0 ##call price on the normalised spot
+    #c_mkt = Call_list*np.exp(a*T_M)/F0 ##call price on the normalised spot
    
-    S = Process(sigma0, a, m, alpha, rho,S0,b,c).simulate_spot(T,dt,"Quadratic")
-    F= Process(sigma0,a,m, alpha,rho,S0,b,c).FutureDynamics(T,dt,S,F0)
-    F_T = F[-1,:]
-    S_T = S[-1,:]
+    S1 = Process(sigma0, a1, m, alpha, rho,S0,b[2],c[2]).simulate_spot(T_M,dt,"Quadratic")
+    F1= Process(sigma0,a1,m, alpha,rho,S0,b[2],c[2]).FutureDynamics(T_M,dt,S1,F0)
+    F_T1 = F1[-1,:]
+    S_T1 = S1[-1,:]
+    
+    S2 = Process(sigma0, a2, m, alpha, rho,S0,b[2],c[2]).simulate_spot(T_M,dt,"Quadratic")
+    F2= Process(sigma0,a2,m, alpha,rho,S0,b[2],c[2]).FutureDynamics(T_M,dt,S2,F0)
+    F_T2 = F2[-1,:]
+    S_T2 = S2[-1,:]
+    
+    
+    S3 = Process(sigma0, a3, m, alpha, rho,S0,b[2],c[2]).simulate_spot(T_M,dt,"Quadratic")
+    F3= Process(sigma0,a3,m, alpha,rho,S0,b[2],c[2]).FutureDynamics(T_M,dt,S3,F0)
+    F_T3 = F3[-1,:]
+    S_T3 = S3[-1,:]
+   
     call = np.zeros((len(K_list)))
     SE_call = np.zeros((len(K_list)))
-    for i in range(len(K_list)):
-     call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T,K_list[i],r,dt,T,F_T,a,"bls")
+     ##effective strike
+    effective_K = 1-np.exp(-a*T)*(1-K_list/np.mean(F_T))
     
-    c_model = call*np.exp(a*T_M)/F0 #call price on the normalised spot
+    
+    for i in range(len(K_list[0:5])):
+     call[i],SE_call[i] = Process(sigma0, a1,m, alpha, rho,S0,b[2],c[2]).OptionPricing(S_T1,K_list[i],r,dt,T,np.mean(F_T1),a1,"MC")
+
+    for i in range(len(K_list[5:7])):
+      call[i+5],SE_call[i+5] = Process(sigma0,a2,m, alpha, rho,S0,b[2],c[2]).OptionPricing(S_T2,K_list[i+5],r,dt,T,np.mean(F_T2),a2,"MC")
+    
+    for i in range(len(K_list[7:])):
+      call[i+7],SE_call[i+7] = Process(sigma0,a3,m, alpha, rho,S0,b[2],c[2]).OptionPricing(S_T3,K_list[i+7],r,dt,T,np.mean(F_T3),a3,"MC")
+    
+
+    c_model = call*np.exp(a*T_M)/np.mean(F_T) #call price on the normalised spot
     ###implied vol from the model prices
          
-    params = np.vstack((c_model, F0*ones, K_list, T_M*ones, r*ones,gamma_sigma_list[1][0]*ones,2*ones))
+    params = np.vstack((call, F0*ones,K_list, T_M*ones, r*ones))
     vols = list(map(implied_vol, *params))
     
+    
     ###implied vol from the market prices
-    params_mkt = np.vstack((Call_list, F0*ones,K_list, T_M*ones, r*ones,gamma_sigma_list[1][0]*ones,1*ones))
+    params_mkt = np.vstack((Call_list, F0*ones,K_list, T_M*ones, r*ones))
     vols_mkt = list(map(implied_vol, *params_mkt))
     
     
-    params_AA= np.vstack((vols_mkt,0.5*ones,K_list,F0*ones))
-    eta_AA = list(map(calibration(a, K, T_M, Future).AA_algorithm,*params_AA))
+    # params_AA= np.vstack((vols_mkt,0.5*ones,K_list,F0*ones))
+    # eta_AA = list(map(calibration(a, K, T_M, Future).AA_algorithm,*params_AA))
    
     
     plt.figure(dpi=1000)
-    plt.plot(effective_K,vols,label="Model Implied Volatilities")
-    plt.plot(effective_K,vols_mkt,label="Market Implied Volatilities")
+    plt.plot(effective_K,vols,'--b*',label="Model IV")
+    plt.plot(effective_K,vols_mkt,'--r*',label="Market IV")
     plt.xlabel("Strike")
     plt.ylabel("Implied Volatility")
-    plt.title("Implied Volatilities of TTF Futures Options Expired in " + str(Month)  )
+    plt.title("Implied Volatilities of TTF Futures Options Expires in " + str(Month)  )
     plt.legend(loc= 'best')
-    plt.savefig(output_path + "Figures/IV_model_mkt")
+    plt.savefig(output_path + "Figures/IV_model_mkt"+str(Month))
+    
+    
+    
+    plt.figure(dpi=1000)
+    plt.plot(effective_K,call,'--b*',label="Model Prices VS Strikes")
+    plt.plot(effective_K,Call_list,'--r*',label="Market Prices VS Strikes")
+    plt.xlabel("Strike")
+    plt.ylabel("Option Price")
+    plt.title("Comparison of TTF Futures Option Price Expired in " + str(Month)  )
+    plt.legend(loc= 'best')
+    plt.savefig(output_path + "Figures/price_model_mkt"+str(Month))
+    
