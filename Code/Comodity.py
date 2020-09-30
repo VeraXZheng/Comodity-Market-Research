@@ -19,7 +19,7 @@ import scipy.optimize as opt
 from scipy.special import ndtr
 class Process:
     
-    def __init__(self, sigma0, a,m,alpha,rho,S0,b,c):
+    def __init__(self, sigma0, a,m,alpha,nu,rho,S0,b,c):
         """
         Parameters
         ----------
@@ -53,9 +53,10 @@ class Process:
         self._alpha = alpha
         self._rho = rho
         self._b = b
-        self._c =c
+        self._c = c
+        self._nu = nu
     
-    def simulate_spot(self,T, dt,dynamics):
+    def simulate_spot(self,T, T_M,dynamics):
         """
         function to model the normalised fictitious spot price
         Input:
@@ -75,6 +76,7 @@ class Process:
         St = np.zeros((n,m))
         St[0,:] = S0
         alpha = self._alpha
+        nu = self._nu
         rho = self._rho
         sigma = np.zeros((n,m))
         sigma0 = self._sigma0
@@ -91,14 +93,14 @@ class Process:
                      St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
         
         if dynamics == "Stochastic":
-             sigma[0,:] = sigma0
+             sigma[0,:] = alpha
              dw2 = np.random.normal(size=(n,m))* sqrt_dt 
              dw3 = rho * dw1 + np.sqrt(1- rho **2) *dw2
              for j in range (m):
                  for i in range(n - 1):
                    
-                     sigma[i+1,j] = sigma[i,j] +  alpha *sigma[i,j] * dw3[i,j] 
-                     St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
+                     sigma[i+1,j] = sigma[i,j] +  nu *sigma[i,j] * dw3[i,j] 
+                     St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] *( St[i,j]-1+np.exp(a*T_M)) * dw1[i,j]
         return St
    
         
@@ -144,6 +146,7 @@ class Process:
         K= 1-np.exp(a*T)*(1-K/F_T)
         
         if method == "MC":
+           
            call = np.maximum(0,S_T - K)*F_T
         if method == "bls":   
             
@@ -173,7 +176,7 @@ class AsianBasketOption:
         self._T = T
         self._weight = weight
    
-    def simulate_correlated_paths(self,corr,nSims,nAssets,nSteps,dynamics,F0):
+    def simulate_correlated_paths(self,corr,nSims,nAssets,dynamics,F0):
         """ Inputs: S0 - stock price
             mu - expected return
             sig - volatility
@@ -191,7 +194,9 @@ class AsianBasketOption:
         b = self._b
         c = self._c
         alpha = self._alpha
-       
+        T = self._T
+        nSteps = T*365
+        
         sigma = np.zeros((nSteps,nSims,nAssets))
         St = np.zeros((nSteps,nSims,nAssets))
         #if incoporate control variate simulation
@@ -229,7 +234,7 @@ class AsianBasketOption:
        # St1 = St1[::21,:,:] 
         St = St[::21,:,:] 
        # StTot =  np.concatenate((St,St1),1)
-        Ft = F0*(1-(1-St)*np.exp(a*(i*dt-T)))  
+        Ft = F0*(1-(1-St)*np.exp(a*T)) 
         return Ft   
     
     def pricing(self,n1,n2,Ft,k):
@@ -240,7 +245,7 @@ class AsianBasketOption:
    
         Ftot = np.dot(np.mean(Ft[n1:n2,:,:],0),weight)
    
-        V = np.exp(-r*T)*np.maximum(Ftot - k,0)
+        V = np.maximum(Ftot - k,0)
         avgV = np.mean(V)
     
          
@@ -288,10 +293,12 @@ class calibration_quadratic:
         diff = np.ones(len(K))
         for i in range(len(K)):
             price_i=BS(F+param[0],K[i]+param[0],param[1],T,0)
-            diff[i]=1.0*abs(price_i- market_price[i])
+            diff[i]=abs(price_i- market_price[i])
         
             if abs(K[i]-F)<0.5:
                 diff[i]=10000*diff[i]
+            else:
+                diff[i]=diff[i]
         total=sum(diff)  
         
         return total
@@ -321,17 +328,13 @@ class calibration_quadratic:
         #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
        
         f1 = -2*a*(effective_K -1)*ndtr(d2)*np.exp(a*N_E)
-        f2 = 4*a**2*(effective_K -1)**2*ndtr(d2)**2*np.exp(2*a*N_E)
-        f3 = f0**2 * norm.pdf(d1)**2*np.exp(a*N_E)*effective_K **2
+        f2 = f1**2
+        f3 = (f0 * norm._pdf(d1)*np.exp(0.5*a*N_E)*effective_K) **2/(k0**2*T)
         f4 = f0*norm._pdf(d1)/(F*np.sqrt(T))
-        estimate_sigma = (f1+np.sqrt(f2+(f3*(param[0]*effective_K +param[1])**2)/(k0**2*np.sqrt(T))))/f4
+        estimate_sigma = (f1+np.sqrt(f2+f3*(param[0]*effective_K +param[1])**2))/f4
         
         return estimate_sigma
     
-    
-   
-        
-     
      def object_func(self,gamma_sigma_list,F,K,T,N_E,param):
          
          
@@ -340,18 +343,13 @@ class calibration_quadratic:
          for i in range (n):
              diff[i]= abs(gamma_sigma_list[1]- self.estimateSigma(gamma_sigma_list,param,K[i],F,T,N_E))
         
-             if abs(K[i]-F)<1:
+             if abs(K[i]-F)<0.5:
                 diff[i]=10000*diff[i]
              else:
                 diff[i]=diff[i]
         
          return  sum(diff)
     
-     
-        
-   
-        
-        
      def find_param(self,gamma_sigma_list,F,K,T,N_E,param):
          start_params = np.array([0.01, 0.1])
          
@@ -366,60 +364,61 @@ class calibration_quadratic:
          return all_results.x
  
          
-    
-     # def dSigdk(self,Sig,eta,F,K):
-           
-           
-     #     k = 1-np.exp(-a*T)*(1-K/F)
-     #     k0=F0*k
-     #     d1 = (np.log(F / k0) + (r + 0.5 * Sig ** 2) * T) / (Sig * np.sqrt(T))
-     #     d2 = d1 - Sig * np.sqrt(T)
-     #    #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
-             
-     #     f1 = -2*a*(k-1)*norm.cdf(d2)*np.exp(a*T)
-     #     f2 = 4*a**2*(k-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
-     #     dadk = 2*a*(k-1)*norm.pdf(d2)*np.exp(a*T)/(k0*Sig)-2*a*norm.cdf(d2)*np.exp(a*T)
-     #     dbdk= -dadk-norm.pdf(d1)**2*np.exp(a*T)*Sig**2/(2*np.sqrt(T))
-     #     dcdk=(d1*norm.pdf(d1)*F*np.exp(a*T))/(Sig*T*k0)
-     #     dsigdk=T*((dadk+dbdk)*norm.pdf(d1)/np.sqrt(T)-dcdk*(f1+np.sqrt(f2+F**2*norm.pdf(d1)**2*np.exp(a*T)*k**2*eta**2)))/norm.pdf(d1)**2
-     #     return dsigdk   
+     ######new approach to calibrate stochastic b,c
+     def bNc_spot(self,gamma_sigma,F,T,N_E,K_list,b):
+         a= 0.103
         
-    
+        #param=np.exp(param) #transform to restrict a to be postive 
+         f0 = F + gamma_sigma[0]
+         c =gamma_sigma[1]*f0*np.exp(-0.5*a*N_E)/F-b
         
-        
-     # def AA_algorithm(self,sig_mkt,delta_k,K,F0,*args):
-     #         eta=0.5 #market volatilities
-     #         Max_iteration = 500
-     #         PRECISION = 1.0e-5
-             
-             
-           
-     #         # T = self._T_M
-     #         k = 1-np.exp(-a*T)*(1-K/F0)#F0*(K*np.exp(a*T)-np.exp(T*a)+1)
-     #         k0=k*F0
-     #         d1 = (np.log(F0 / k0) + (r + 0.5 * sig_mkt ** 2) * T) / (sig_mkt * np.sqrt(T))
-     #         d2 = d1 - sig_mkt * np.sqrt(T)
+         s = Process(sigma0, a, m, alpha, rho,S0,b,c).simulate_spot(T, dt, "Quadratic")
+         S_T = s[-1,:]
+         ones =np.ones(np.size(K_list)) 
+         call = ones
+         SE_call = ones
          
-     #    #call_price = np.exp(a*T)/F *(f0*norm.cdf(d1)-k0*norm.cdf(d2))
+         for i in range(len(K_list)):
+              call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T,K_list[i],r,N_E,F,a,"MC")
          
-     #         f1 = -2*a*(k-1)*norm.cdf(d2)*np.exp(a*T)
-     #         f2 = 4*a**2*(k-1)**2*norm.cdf(d2)**2*np.exp(2*a*T)
-     #         f3 = F0**2 * norm.pdf(d1)**2*np.exp(a*T)*K**2
-     #         f4 = F0*norm.pdf(d1)/(F0*np.sqrt(T))
-             
-     #         for i in range(0, Max_iteration):
-     #             sigma = (f1+np.sqrt(f2+(f3*(eta**2)/(k0**2*np.sqrt(T)))))/f4
-     #             diff = sigma-sig_mkt
-                 
-     #             if (abs(diff) < PRECISION):
-     #                 return sigma
-     #             else:
-     #                 eta = eta*sig_mkt/sigma+2*(self.dSigdk(sig_mkt,eta,F0,K)-self.dSigdk(sigma,eta,F0,K))*delta_k
-     #         return eta 
-
-
+        
+         params = np.vstack((call,F*ones,K_list, T*ones, r*ones))
+         vols = list(map(implied_vol, *params))
+         
+         return vols
+        
+     def obj_vol(self,gamma_sigma,K_list,F,T,N_E,sigma,b):
+          vols= self.bNc_spot(gamma_sigma,F,T,N_E,K_list,b)
+          
+          n= len(K_list)
+          diff = np.ones(n)
+          for i in range (n):
+              diff[i]= abs(sigma[i]- vols[i])
+        
+              if abs(K_list[i]-F)<0.5:
+                 diff[i]=10000*diff[i]
+              else:
+                 diff[i]=diff[i]
+          
+          return  sum(diff)
+     
+        
+     def find_bc(self,gamma_sigma,F,K_list,T,N_E,sigma,b):
+         start_params = 0.174
+         
+         difference = lambda b: self.obj_vol(gamma_sigma, K_list, F, T, N_E,sigma,b)
+         #bnds = ((0,1),(0,1))
+         all_results = opt.minimize(fun=difference, x0=start_params,
+                                        method="Nelder-Mead")#BFGS bounds=bnds)
+         
+         error=self.obj_vol(gamma_sigma,K_list, F, T, N_E,sigma,all_results.x,)
+         if (error)>0.001:
+             all_results = opt.minimize(fun=difference, x0=all_results.x,  method="Nelder-Mead")
+         return all_results.x
+ 
+    
 class Sabr:
-    def SABR(self,alpha,beta,rho,nu,F,K,time,MKT):
+    def SABR(self,alpha,rho,nu,F,K,time,MKT):
         """
         function to evaluate model implied vol at each strike with each tenor
         Input:
@@ -431,25 +430,25 @@ class Sabr:
             
         """
         if F == K: # ATM formula
-            V = (F*K)**((1-beta)/2.)
-            logFK = np.log(F/K)
-            A = 1 + ( ((1-beta)**2*alpha**2)/(24.*(V**2)) + (alpha*beta*nu*rho)/(4.*V) + ((nu**2)*(2-3*(rho**2))/24.) ) * time
-            vol = (alpha/V)*A
+           
+            
+            A = 1 + (  alpha*nu*rho/4. + ((nu**2)*(2-3*(rho**2))/24.) ) * time
+            vol = alpha*A
             diff = vol - MKT
         elif F != K: # not-ATM formula 
-            V = (F*K)**((1-beta)/2.) 
+             
             logFK = np.log(F/K)
-            z = (nu/alpha)*V*logFK
+            z = nu*logFK/alpha
             x =np.log( ( np.sqrt(1-2*rho*z+z**2) + z - rho ) / (1-rho) )
-            A= 1 + ( ((1-beta)**2*alpha**2)/(24.*(V**2)) + (alpha*beta*nu*rho)/(4.*V) + ((nu**2)*(2-3*(rho**2))/24.) ) * time
-            B = 1 + (1/24.)*(((1-beta)*logFK)**2) + (1/1920.)*(((1-beta)*logFK)**4)
-            Vol = (nu*logFK*A)/(x*B) 
+            A= 1 + ( rho*nu*alpha/4+ (2-3*(rho**2))*(nu**2)/24. ) * time
+            
+            Vol = (nu*logFK*A)/x 
             diff = Vol - MKT
         return diff
   
 
 
-    def smile(self,alpha,beta,rho,nu,F,K,time,MKT,i):
+    def smile(self,alpha,rho,nu,F,K,time,MKT,i):
         """
         The smile function computes the implied volatilities for
         a given ”smile” pointed out by the index i. F, time and 
@@ -457,24 +456,24 @@ class Sabr:
         """
         for j in range(len(K)):
         
-            self.SABR(alpha,beta,rho,nu,F,K[j],time,MKT[j])
+            self.SABR(alpha,rho,nu,F,K[j],time,MKT[j])
 
 
 
-    def SABR_vol_matrix(self,alpha,beta,rho,nu,F,K,time,MKT): 
+    def SABR_vol_matrix(self,alpha,rho,nu,F,K,time,MKT): 
         """function computes the implied volatilities for all 
         combinations of swaptions. F, time and the parameters are vectors; 
         K and MKT are matrices.
         """
         for i in range(len(F)):
-            self.smile(alpha[i],beta[i],rho[i],nu[i],F[i],K[i],time[i],MKT[i],i)
+            self.smile(alpha[i],rho[i],nu[i],F[i],K[i],time[i],MKT[i],i)
 
 
     def objfunc(self,par,F,K,time,MKT): 
         sum_sq_diff = 0
-        alpha,beta,rho,nu=par
+        alpha,rho,nu=par
         for j in range(len(K)):
-            diff = self.SABR(alpha,beta,rho,nu,F,K[j],time,MKT[j])  
+            diff = self.SABR(alpha,rho,nu,F,K[j],time,MKT[j])  
             sum_sq_diff = sum_sq_diff + diff**2
         obj = np.sqrt(sum_sq_diff) 
         return obj
@@ -486,49 +485,23 @@ class Sabr:
         """The function used to calibrate each smile 
         (different strikes within the same tenor"""
         alpha = np.zeros(len(F))
-        beta = np.zeros(len(F))
+        
         rho = np.zeros(len(F))
         nu = np.zeros(len(F))
         
         for i in range(len(F)):
             x0 = starting_par
-            bnds = ( (0.001,None) , (0,1) , (-0.999,0.999) , (0.001,None) ) 
+            bnds = ( (0.001,None)  , (-0.999,0.999) , (0.001,None) ) 
             Diff = lambda param: self.objfunc(param,F[i],K[i],time[i],MKT[i])
             res = opt.minimize(Diff,x0, method="SLSQP",bounds = bnds) 
             alpha[i] = res.x[0]
-            beta[i] = res.x[1] 
-            rho[i] = res.x[2] 
-            nu[i] = res.x[3]
+           
+            rho[i] = res.x[1] 
+            nu[i] = res.x[2]
 
-        return alpha, beta, rho, nu
+        return alpha, rho, nu
 
-    def Sabr_underlying(self,alpha,beta,rho,nu,m,F0,a,T_M,K):
-        
-          """function to simulate future prices and eta 
-          given known param"""
-          n = int(T_M / dt)
-          # Ft = np.zeros((n,m))
-          
-          # Ft[0,:] = F0
-          eta = np.zeros((n,m))
-          eta_S = np.zeros((n,m))
-          St = np.zeros((n,m))
-          St[0:,:]=1
-          sqrt_dt = dt ** 0.5
-          dw1 = np.random.normal(size=(n,m))* sqrt_dt 
-          eta[0,:] = nu
-          dw2 = np.random.normal(size=(n,m))* sqrt_dt 
-          dw3 = rho * dw1 + np.sqrt(1- rho **2) *dw2
-          K_F=1-np.exp(a*T_M)*(1-K/F0)
-          for j in range (m):
-              for i in range(n - 1):
-                   eta[i+1,j] = eta[i,j] +  alpha *eta[i,j] * dw3[i,j] 
-                   #Ft[i+1,j] = Ft[i,j] + Ft[i,j]** beta *  eta[i,j] * dw1[i,j]
-                   eta_S[i+1,j] = eta[i+1,j]/(F0*(1+K_F*np.exp(-a*T_M)))
-                   St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + eta_S[i,j] * St[i,j] * dw1[i,j]
-            #St = 1-(1-Ft/F0)*np.exp(a*T_M)
-          #choose ATM strike          
-          return St
+    
          
    ###########################################################
 
@@ -658,43 +631,144 @@ if __name__ == "__main__":
 
 
 ###################Asian Basket Option#########
-    m=1000
-    K0 = Strike_list[10]
-    b=0.01
-    c=0.1
+    m=50000
+    klist = np.linspace(0.5*np.mean(Future),1.5*np.mean(Future),10)
+    b=0.15
+    c=0.4
     alpha = 0.1
     alpha_list =[0.002,0.004,0.006,0.008,0.010,0.012,0.014,0.016,0.018,0.20]
     a =0.1
-    alist=[0,0.15,0.3,0.45,0.6,0.75,0.9]
-    blist=np.linspace(0.0,0.02,25)
+    alist=np.linspace(0.0,0.8,40)
+    blist=np.linspace(0.0,0.2,20)
     clist=np.linspace(0,0.08,30)
     corr = ([1,0.2],[0.2,1])#([1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]) #([1,0.5],[0.5,1])
     corr_list = [[[1, 0.2,0.1],[0.2,1,0.2],[0.1,0.2,1]],[[1, 0.2,0.3],[0.3,1,0.3],[0.3,0.3,1]],[[1, 0.4,0.3],[0.4,1,0.4],[0.3,0.4,1]],[[1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]],[[1, 0.6,0.5],[0.6,1,0.6],[0.5,0.6,1]],[[1, 0.7,0.6],[0.7,1,0.7],[0.6,0.7,1]],[[1, 0.8,0.7],[0.8,1,0.8],[0.8,0.7,1]],[[1, 0.9,0.8],[0.9,1,0.9],[0.8,0.5,0.9]]]
     nSims =10000
     nSteps = int(T/dt)
     F0 = [5.495, 5.805]#[5.495, 5.805, 6.49]
-    nAssets = 2 #2
+    nAssets = 3 #2
     dynamics = "Quadratic"
-    weight=[1/2,1/2] #[1/3 , 1/3 ,1/3] #[1/2,1/2]
-    avgV= np.zeros((len(blist)))
-    for i in range(len(blist)):
-        
-        Ft = AsianBasketOption(weight,a,blist[i],c,alpha,dt,T).simulate_correlated_paths(corr,nSims,nAssets,nSteps,dynamics,F0)
+    weight=[1/3 , 1/3 ,1/3]#[1/2,1/2] #[1/3 , 1/3 ,1/3] #[1/2,1/2]
+    avgV= np.zeros((len(clist)))
+    
+    T=1/3
+    for i in range(len(clist)):
+       
+       
+        S = Process(sigma0, a, m, alpha,nu,rho,S0,b,clist[i]).simulate_spot(T,dt,"Quadratic")
+        F1= np.ones(len(S))
+        F2=np.ones(len(S))
+        F3=np.ones(len(S))
+        F1= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[0])
+        F2= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[1])
+        F3= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[2])
+        Ft = np.dstack((F1,F2,F3))
         k=np.dot(Ft[0,:,:],weight)
-        V, avgV[i] = AsianBasketOption(weight,a,blist[i],c,alpha,dt,T).pricing( len(Ft)-3,len(Ft)-1, Ft,k)    
-        #print('Call price of the Asian basket Option with ' + str(nSims)+" simulations and mean reversion speed "+str(alist[i]) + " is " +str(avgV))     
-   
+        V, avgV[i] = AsianBasketOption(weight,alist[i],b,c,alpha,dt,T).pricing( len(Ft)-3,len(Ft)-1, Ft,k)    
+    
     plt.figure(dpi=1000)
-    plt.plot(blist,avgV,label="Asian Basket Price")
+    plt.plot(alist,avgV,label="Asian Basket Price")
     #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
     plt.xticks(rotation=45, ha='right')
-    plt.xlabel(r"$b$")
+    plt.xlabel(r"$a$")
     plt.ylabel("Price")
-    plt.title(r"Effect of Parameter $b$ in the " +str(dynamics) + " Model" )
+    plt.title(r"Effect of Parameter $a$ in the " +str(dynamics) + " Model" )
     plt.legend(loc= 'best')
-    plt.savefig(output_path+"Figures/SLV_b")
+    plt.savefig(output_path+"Figures/SLV_c")
     
     
+    
+ #for sabr 
+    dynamics = "stochastic"
+    alpha =0.5
+    nu=0.4
+    rho=-0.1
+    nu_list = np.linspace(0,1,20)
+    rho_list = np.linspace(-0.5,0.5,20)
+    alpha_list = np.linspace(0,0.8,20)
+    weight=[1/3 , 1/3 ,1/3]#[1/2,1/2] #[1/3 , 1/3 ,1/3] #[1/2,1/2]
+   
+    avgV= np.zeros((len(nu_list)))
+   
+    for i in range(len(nu_list)):
+       
+       
+        S = Process(sigma0, a, m, alpha,nu_list[i],rho,S0,b,c).simulate_spot(T,dt,"Stochastic")
+        F1= np.ones(len(S))
+        F2=np.ones(len(S))
+        F3=np.ones(len(S))
+        F1= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[0])
+        F2= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[1])
+        F3= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[2])
+        Ft = np.dstack((F1,F2,F3))
+        k=np.dot(Ft[0,:,:],weight)
+        V, avgV[i] = AsianBasketOption(weight,a,b,c,alpha,dt,T).pricing( len(Ft)-3,len(Ft)-1, Ft,k)    
+    
+    plt.figure(dpi=1000)
+    plt.plot(nu_list,avgV,label="Asian Basket Price")
+    #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
+    plt.xticks(rotation=45, ha='right')
+    plt.xlabel(r"$\nu$")
+    plt.ylabel("Price")
+    plt.title(r"Effect of Parameter $\nu$ in the " +str(dynamics) + " Model" )
+    plt.legend(loc= 'best')
+    plt.savefig(output_path+"Figures/SLV_nu")
+    
+    
+    
+    
+    
+    avgV= np.zeros((len(rho_list)))
+   
+    for i in range(len(rho_list)):
+       
+       
+        S = Process(sigma0, a, m, alpha,nu,rho_list[i],S0,b,c).simulate_spot(T,dt,"Stochastic")
+        F1= np.ones(len(S))
+        F2=np.ones(len(S))
+        F3=np.ones(len(S))
+        F1= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[0])
+        F2= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[1])
+        F3= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[2])
+        Ft = np.dstack((F1,F2,F3))
+        k=np.dot(Ft[0,:,:],weight)
+        V, avgV[i] = AsianBasketOption(weight,a,b,c,alpha,dt,T).pricing( len(Ft)-3,len(Ft)-1, Ft,k)    
+    
+    plt.figure(dpi=1000)
+    plt.plot(rho_list,avgV,label="Asian Basket Price")
+    #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
+    plt.xticks(rotation=45, ha='right')
+    plt.xlabel(r"$\rho$")
+    plt.ylabel("Price")
+    plt.title(r"Effect of Parameter $\rho$ in the " +str(dynamics) + " Model" )
+    plt.legend(loc= 'best')
+    plt.savefig(output_path+"Figures/SLV_rho")
+    
+    avgV= np.zeros((len(alpha_list)))
+   
+    for i in range(len(alpha_list)):
+       
+       
+        S = Process(sigma0, a, m, alpha_list[i],nu,rho,S0,b,c).simulate_spot(T,dt,"Stochastic")
+        F1= np.ones(len(S))
+        F2=np.ones(len(S))
+        F3=np.ones(len(S))
+        F1= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[0])
+        F2= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[1])
+        F3= Process(sigma0,a,m, alpha,nu,rho,S0,b,c).FutureDynamics(T,dt,S,Future[2])
+        Ft = np.dstack((F1,F2,F3))
+        k=np.dot(Ft[0,:,:],weight)
+        V, avgV[i] = AsianBasketOption(weight,a,b,c,alpha,dt,T).pricing( len(Ft)-3,len(Ft)-1, Ft,k)    
+    
+    plt.figure(dpi=1000)
+    plt.plot(rho_list,avgV,label="Asian Basket Price")
+    #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
+    plt.xticks(rotation=45, ha='right')
+    plt.xlabel(r"$\alpha$")
+    plt.ylabel("Price")
+    plt.title(r"Effect of Parameter $\alpha$ in the " +str(dynamics) + " Model" )
+    plt.legend(loc= 'best')
+    plt.savefig(output_path+"Figures/SLV_alpha")
     
     
    
@@ -702,40 +776,6 @@ if __name__ == "__main__":
 
 #Price vs Strike
 
-
-    m=1000
-    K0 = Strike_list
-    b=0.01
-    c=0.1
-    alpha = 0.01
-    alpha_list =[0.002,0.004,0.006,0.008,0.010,0.012,0.014,0.016,0.018,0.20]
-    a =0.05
-    alist=[0,0.15,0.3,0.45,0.6,0.75,0.9]
-    blist=np.linspace(0,0.1,20)
-    clist=np.linspace(0,0.1,30)
-    corr = ([1,0.5],[0.5,1])#([1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]) #([1,0.5],[0.5,1])
-    corr_list = [[[1, 0.2,0.1],[0.2,1,0.2],[0.1,0.2,1]],[[1, 0.2,0.3],[0.3,1,0.3],[0.3,0.3,1]],[[1, 0.4,0.3],[0.4,1,0.4],[0.3,0.4,1]],[[1, 0.5,0.4],[0.5,1,0.5],[0.4,0.5,1]],[[1, 0.6,0.5],[0.6,1,0.6],[0.5,0.6,1]],[[1, 0.7,0.6],[0.7,1,0.7],[0.6,0.7,1]],[[1, 0.8,0.7],[0.8,1,0.8],[0.8,0.7,1]],[[1, 0.9,0.8],[0.9,1,0.9],[0.8,0.5,0.9]]]
-    nSims =10000
-    nSteps = int(T/dt)
-    F0 = [5.495, 5.805]#[5.495, 5.805, 6.49]
-    nAssets = 2 #2
-    dynamics = "Quadratic"
-    weight=[1/2,1/2] #[1/3 , 1/3 ,1/3] #[1/2,1/2]
-    avgV= np.zeros((len(Strike_list)))
-    for i in range(len(Strike_list)):
-        
-        Ft = AsianBasketOption(weight,a,b,c,alpha,dt,T).simulate_correlated_paths(corr,nSims,nAssets,nSteps,dynamics,F0)
-        V, avgV[i] = AsianBasketOption(weight,a,b,c,alpha,dt,T).pricing( -30,len(Ft)-1, Ft,Strike_list[i])    
-        #print('Call price of the Asian basket Option with ' + str(nSims)+" simulations and mean reversion speed "+str(alist[i]) + " is " +str(avgV))     
-   
-    plt.figure(dpi=1000)
-    plt.plot(Strike_list,avgV,label="Asian Basket Price")
-    #plt.plot(np.linspace(0.1,0.8,len(corr_list)),avgV,label="Asian Basket Price")
-    plt.xlabel(r"$K$")
-    plt.ylabel("Price")
-    plt.title(r"Effect of Parameter $Strike$ in the " +str(dynamics) + " Model" )
-    plt.legend(loc= 'best')
-    plt.savefig(output_path+"Figures/SLV_K")
 
 
  ######plot of European Option against parameters#######
@@ -839,8 +879,12 @@ if __name__ == "__main__":
     
     
     ####calibration##################
-    a=0.103
-    Month_List = np.array(["August","September","October","November"])
+
+    #
+    a=0.05
+    Month_List = np.array(["October","November","December"])
+    c= np.ones(len(Month_List))
+    b= np.ones(len(Month_List))
     N_E = np.ones((len(Month_List)))
     T_M = np.ones((len(Month_List)))
     Future= np.ones((len(Month_List)))
@@ -866,20 +910,19 @@ if __name__ == "__main__":
  
     
     ####Calibration for different months
-    c= np.ones(len(Month_List))
-    b= np.ones(len(Month_List))
-    for i in range(len(Month_List)):  
+       
     
-         b[i],c[i]=calibration_quadratic(a, K, T_M, Future).find_param(gamma_sigma_list[i],Future[i],K[i],T_M[i],N_E[i],param=[])
+        b[i],c[i]=calibration_quadratic(a, K, T_M, Future).find_param(gamma_sigma_list[i],Future[i],K[i],T_M[i],N_E[i],param=[])
         
-         print("Calibration Result for "+str(Month_List[i])+ " is b=" +str(b[i])+" and c=" +str(c[i]))
-         print('Error',calibration_quadratic(a, K, T_M, Future).object_func(gamma_sigma_list[i],Future[i],K[i],T_M[i],N_E[i],[b[i],c[i]]))
+        print("Calibration Result for "+str(Month_List[i])+ " is b=" +str(b[i])+" and c=" +str(c[i]))
+        print('Error',calibration_quadratic(a, K, T_M, Future).object_func(gamma_sigma_list[i],Future[i],K[i],T_M[i],N_E[i],[b[i],c[i]]))
     #####calculate the model price######
-    Month ="October"
-    sigma0= gamma_sigma_list[2][1]
-    a1 = 0.103#0.103018 #
-    a2=0.15325
-    a3=0.1522
+    Month ="October"#“November” “December”
+    sigma0= gamma_sigma_list[0][1]
+    
+    gamma0= gamma_sigma_list[0][0]
+   
+
     m = 10000
     alpha = 0
     rho =0.15
@@ -887,62 +930,44 @@ if __name__ == "__main__":
     #
     
     dt=1/365
-    Option_data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month)
-    F0 =  Option_data["1-Month Future"].values[0]   
-    K_list = Option_data["Strike"].values 
+   
+    F_oct =  Future[0]  
+    K_oct = K[0]
    
     
-    ones =np.ones(np.size(K_list))   
+    ones =np.ones(np.size(K_oct))   
     
     #time to maturity
-    N_E = Option_data["N-E"].values[0]
-    T_M = Option_Data["Time to Maturity"].values[0]
-    Call_list = Option_data["Call"].values
+    N_E_oct = N_E[0]
+    T_M_oct = T_M[0]
+    Call_oct = market_price[0]
     #c_mkt = Call_list*np.exp(a*T_M)/F0 ##call price on the normalised spot
    
-    S1 = Process(sigma0, a1, m, alpha, rho,S0,b[2],c[2]).simulate_spot(T,dt,"Quadratic")
-    F1= Process(sigma0,a1,m, alpha,rho,S0,b[2],c[2]).FutureDynamics(N_E,dt,S1,F0)
-    F_T1 = F1[-1,:]
-    S_T1 = S1[-1,:]
-    
-    S2 = Process(sigma0, a2, m, alpha, rho,S0,b[2],c[2]).simulate_spot(T,dt,"Quadratic")
-    F2= Process(sigma0,a2,m, alpha,rho,S0,b[2],c[2]).FutureDynamics(T,dt,S2,F0)
-    F_T2 = F2[-1,:]
-    S_T2 = S2[-1,:]
-    
-    
-    S3 = Process(sigma0, a3, m, alpha, rho,S0,b[2],c[2]).simulate_spot(T,dt,"Quadratic")
-    F3= Process(sigma0,a3,m, alpha,rho,S0,b[2],c[2]).FutureDynamics(T,dt,S3,F0)
-    F_T3 = F3[-1,:]
-    S_T3 = S3[-1,:]
+    S = Process(sigma0, a, m, alpha, rho,S0,b[0],c[0]).simulate_spot(T_M_oct,dt,"Quadratic")
    
-    call = np.zeros((len(K_list)))
-    SE_call = np.zeros((len(K_list)))
-     ##effective strike
-    effective_K = 1-np.exp(-a*N_E)*(1-K_list/np.mean(F_T))
+    S_T = S[-1,:]
     
-    
-    for i in range(len(K_list)):
-     call[i],SE_call[i] = Process(sigma0, a1,m, alpha, rho,S0,b[2],c[2]).OptionPricing(S_T1,K_list[i],r,dt,N_E,np.mean(F_T1),a1,"MC")
-
-    for i in range(len(K_list[4:7])):
-      call[i+4],SE_call[i+4] = Process(sigma0,a2,m, alpha, rho,S0,b[2],c[2]).OptionPricing(S_T2,K_list[i+4],r,dt,T,np.mean(F_T2),a2,"MC")
-    
-    for i in range(len(K_list[7:])):
-      call[i+7],SE_call[i+7] = Process(sigma0,a3,m, alpha, rho,S0,b[2],c[2]).OptionPricing(S_T3,K_list[i+7],r,dt,T,np.mean(F_T3),a3,"MC")
-    
-
+   #simulate for november
    
-    ###implied vol from the model prices
-         
-    params = np.vstack((call, F0*ones,K_list, T_M*ones, r*ones))
+    call = np.zeros((len(K[0])))
+    SE_call = np.zeros((len(K[0])))
+    market_price_dd=np.zeros((len(K[0])))
+    for i in range(len(K[0])):
+       call[i],SE_call[i] = Process(sigma0, a ,m, alpha,rho,S0,b[0],c[0]).OptionPricing(S_T,K_oct[i],r,N_E[0],F_oct,a,"MC")#N_E
+       market_price_dd[i]=BS(F_oct+gamma0,K_oct[i]+gamma0,sigma0,N_E[0],0) 
+     #Process(sigma0, a ,m, alpha, rho,S0,b[0],c[0]).OptionPricing(F_T+gamma0,K_list[i]+gamma0,0,dt,T_M,np.mean(F_T),a,"bls")
+   
+    
+    params = np.vstack((call, F_oct*ones,K_oct, T_M[0]*ones, r*ones))
     vols = list(map(implied_vol, *params))
-    
-    
+   
+    effective_K = 1-np.exp(-a*N_E[0])*(1-K_oct/F_oct)
+   
     ###implied vol from the market prices
-    params_mkt = np.vstack((Call_list, F0*ones,K_list, T_M*ones, r*ones))
+    params_mkt = np.vstack((market_price_dd, F_oct*ones,K_oct, T_M[0]*ones, r*ones))
     vols_mkt = list(map(implied_vol, *params_mkt))
-    
+   
+   
     
     # params_AA= np.vstack((vols_mkt,0.5*ones,K_list,F0*ones))
     # eta_AA = list(map(calibration(a, K, T_M, Future).AA_algorithm,*params_AA))
@@ -960,7 +985,7 @@ if __name__ == "__main__":
     
     
     plt.figure(dpi=1000)
-    plt.plot(effective_K,call,'--b*',label="Model Prices VS Strikes")
+    plt.plot(effective_K,call,linestyle='None',color='g',marker='o',label="Model Prices VS Strikes")
     plt.plot(effective_K,Call_list,'--r*',label="Market Prices VS Strikes")
     plt.xlabel("Strike")
     plt.ylabel("Option Price")
@@ -968,14 +993,29 @@ if __name__ == "__main__":
     plt.legend(loc= 'best')
     plt.savefig(output_path + "Figures/price_model_mkt1"+str(Month))
 
+########New Method To Calibrate b, c
+    #for october
+    
+    calibration_quadratic(a, K, T_M, Future).find_bc(gamma_sigma_list[0], Future[0], K[0], T_M[0], N_E[0], vols_mkt[0],b=[])
+    
+
+
+
+
+
+
+
+
 ###Calibration Sabr####
-    Month_List = np.array(["October","November"])
+    Month_List = np.array(["October","November","December"])
     N_E = np.ones((len(Month_List)))
     T_M = np.ones((len(Month_List)))
     Future= np.ones((len(Month_List)))
     market_price=np.zeros((len(Month_List),10), dtype=np.ndarray)
     K=np.zeros((len(Month_List),10), dtype=np.ndarray)
     vols_mkt = np.zeros((len(Month_List),10), dtype=np.ndarray)
+    vols_mdl = np.zeros((len(Month_List),10), dtype=np.ndarray)
+    effective_K=np.zeros((len(Month_List),10), dtype=np.ndarray)
     
     for i in range(len(Month_List)):
         Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    #SEPopt
@@ -989,22 +1029,45 @@ if __name__ == "__main__":
         N_E[i]=Option_Data["N-E"].values[0]
     #future price
         Future[i] = Option_Data["1-Month Future"].values[0]
+    
+        effective_K[i] = 1-np.exp(-a*N_E[i])*(1-K[i]/Future[i])
     #params needed to clculate market vols
         ones= np.ones(np.size(K[i]))
         params_mkt = np.vstack((market_price[i], Future[i]*ones,K[i], T_M[i]*ones, r*ones))
+        params_mdl = np.vstack((call[i], Future[i]*ones,K[i], T_M[i]*ones, r*ones))
         vols_mkt[i] = list(map(implied_vol, *params_mkt))
-    
+        vols_mdl[i] = list(map(implied_vol, *params_mdl))
    
    
-    starting_par= np.array([0.001,0.5,0,0.001])
-    [alpha,beta,rho,nu]=Sabr().calibration(starting_par,Future,K,T_M,vols_mkt)
+    starting_par= np.array([0.001,0,0.001])
+    [alpha,rho,nu]=Sabr().calibration(starting_par,Future,K,T_M,vols_mkt)
     
-    #dynamic of eta 
-    St= Sabr().Sabr_underlying(alpha[0],beta[0],rho[0],nu[0],10,Future[0],0.1,T_M[0],8)
-    S_T = St[-1,:]
+    call = np.zeros((len(Month_List),10), dtype=np.ndarray)
+    SE_call= np.zeros((len(Month_List),10), dtype=np.ndarray)
     
-    call = np.ones((len(K[0])))
-    SE_call= np.ones((len(K[0])))
-    for i in range(len(K[0])):
-        call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T,K[0][i],r,T_M[0],F0,0.1,"MC")
+    #dynamic of spot 
+    for i in range(len(Month_List)):
+        St= Process(sigma0,a,m,alpha[i],nu[i],rho[i],1,b,c).simulate_spot(T_M[i],N_E[i],"Stochastic")
+        S_T = St[-1,:]
+        for j in range(len(K[i])):
+               call[i,j],SE_call[i,j] = Process(sigma0, a,m, alpha, nu,rho,S0,b,c).OptionPricing(S_T,K[i][j],r,T_M[i],Future[i],0.01,"MC")
+   
     
+    for i in range(len(Month_List)): 
+        plt.figure(dpi=1000)
+        plt.plot(effective_K[i],call[i],linestyle='None',color='g',marker='o',label="Model Prices VS Strikes")
+        plt.plot(effective_K[i],market_price[i],'--r*',label="Market Prices VS Strikes")
+        plt.xlabel("Strike")
+        plt.ylabel("Option Price")
+        plt.title("Comparison of TTF Futures Option Price Expired in " + str(Month_List[i])  )
+        plt.legend(loc= 'best')
+        plt.savefig(output_path + "Figures/price_mdl_mkt"+str(Month_List[i]))
+    for i in range(len(Month_List)):
+         plt.figure(dpi=1000)
+         plt.plot(effective_K[i],vols_mdl[i],'--b*',label="Model IV")
+         plt.plot(effective_K[i],vols_mkt[i],'--r*',label="Market IV")
+         plt.xlabel("Strike")
+         plt.ylabel("Implied Volatility")
+         plt.title("Implied Volatilities of TTF Futures Options Expires in " + str(Month_List[i])  )
+         plt.legend(loc= 'best')
+         plt.savefig(output_path + "Figures/vol_mdl_mkt"+str(Month_List[i]))
