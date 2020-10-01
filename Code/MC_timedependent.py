@@ -32,10 +32,17 @@ def simulate_spot(a,b,c,T,m,dt):
         """
         # number of steps for each future (simulate until the furthest future)
         n = T / dt
-        # longest 
-        N = int(n[-1])
-         
         S0 = 1
+        # longest 
+       
+        if np.size(T)==1:
+            N=int(n)
+            b0=b
+            c0=c
+        else:
+            N = int(n[-1])
+            b0=b[0]
+            c0=c[0]
         St = np.zeros((N,m))
         St[0,:] = S0
        
@@ -46,12 +53,13 @@ def simulate_spot(a,b,c,T,m,dt):
         dw1 = np.random.normal(size=(N,m))* sqrt_dt 
         sigma[0,:] = sigma0
         for j in range (m):
-                for i in range(int(n[0]) - 1):
-               
-                     sigma[i+1,j] = b[0] * St[i,j] +c[0] 
+                for i in range(N - 1):
+                     
+                     sigma[i+1,j] = b0 * St[i,j] +c0
                      St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
-        if len(T)==1:
+        if np.size(T)==1:
             return St
+        
         else:
             for j in range (m):
             
@@ -258,17 +266,23 @@ class time_dependent:
              ones=np.ones(len(K_list))
              call=ones
              SE_call =ones
+             market_price_dd=ones
              for i in range(len(K_list)):
                  call[i],SE_call[i] = OptionPricing(St[-1,:],K_list[i],N_E,F_T,a,m)
-                 params = np.vstack((call,F_T*ones,K_list, T*ones))
-             vols = list(map(implied_vol, *params))
+                 market_price_dd[i]=BS(F_front+gamma_sigma[0],K[0][i]+gamma_sigma[0],gamma_sigma[1],N_E,0) 
+     
+            
+             params = np.vstack((call,F_front*ones,K_list, T*ones))
+             params_dd = np.vstack((market_price_dd,F_front*ones,K_list, T*ones))
+             vols_mdl = list(map(implied_vol, *params))
+             vols_dd = list(map(implied_vol, *params_dd))
              n= len(K_list)
              diff = np.ones(n)
              for i in range (n):
                  if abs(K_list[i]-F_T)<0.5:
-                     diff[i]= (mkt_vols[i]- vols[i])**2*1000
+                     diff[i]= (vols_mdl[i]- vols_dd[i])**2*1000
                  else:
-                      diff[i]=(mkt_vols[i]- vols[i])**2
+                      diff[i]=(vols_mdl[i]- vols_dd[i])**2
              diff =sum(diff)
          
         return diff
@@ -284,7 +298,7 @@ class time_dependent:
                                         method="Nelder-Mead")#BFGS bounds=bnds)
          
          error=self.object_func(gamma_sigma,F_front,F_back,T,N_E,K_list,mkt_vols,obj,all_results.x)
-         while(error)>0.001:
+         while(error)>0.0001:
              all_results = opt.minimize(fun=difference, x0=all_results.x,  method="Nelder-Mead")
              error=self.object_func(gamma_sigma,F_front,F_back,T,N_E,K_list,mkt_vols,obj,all_results.x)
          print('Error',error)
@@ -333,9 +347,9 @@ if __name__ == "__main__":
        
    
 #get first set of b and c for Augustto initialise the process
-    gamma_sigma_list= calibration_quadratic(a, K, T_M, Future).optimise(np.asarray(K[0],float), Future[0],T_M[0],np.asarray(market_price[0],float),param=[])
-    b0,c0=calibration_quadratic(a, K, T_M, Future).find_param(gamma_sigma_list,Future[0],K[i],T_M[0],N_E[0],param=[])
-    print("Calibration Result for "+str(Month_List[0])+ " is b=" + str(b0)+" and c=" + str(c0))
+    gamma_sigma_list= calibration_quadratic(a, K, T_M, Future).optimise(np.asarray(K[1],float), Future[1],T_M[1],np.asarray(market_price[1],float),param=[])
+    b0,c0=calibration_quadratic(a, K, T_M, Future).find_param(gamma_sigma_list,Future[1],K[1],T_M[1],N_E[1],param=[])
+    print("Calibration Result for "+str(Month_List[1])+ " is b=" + str(b0)+" and c=" + str(c0))
  
 
 #calibrate for the second month 
@@ -343,8 +357,18 @@ if __name__ == "__main__":
     b_list[0]= b0
     c_list = np.ones(2)
     c_list[0]= c0
-    b1 = time_dependent(a, dt, m, b_list, c_list).find_bc(gamma_sigma_list, Future[1], Future[2], T_M[:1], N_E[1], K[1], vols_mkt[1], "Future Price", 0.1, [])
+    b1 = time_dependent(a, dt, m, b_list, c_list).find_bc(gamma_sigma_list[1], Future[1], Future[2], T_M[:2], N_E[1], K[1], vols_mkt[1], "IV", 0.1, [])
     
-
-
+    St = simulate_spot(a,b[0],c[0],T_M[0],m,dt)
+        
+    F_T = FutureDynamics(a, N_E[0],St[-1,:],Future[0])
+   
+    ones=np.ones(len(K[0]))
+    call=ones
+    SE_call =ones
+    market_price_dd=ones
+    for i in range(len(K[0])):
+        call[i],SE_call[i] = OptionPricing(St[-1,:],K[0][i],T_M[0],F_T,a,m)
+        market_price_dd[i]=BS(Future[0]+gamma_sigma_list[0][0],K[0][i]+gamma_sigma_list[0][0],gamma_sigma_list[0][1],N_E[0],0) 
+     
            
