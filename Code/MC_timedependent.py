@@ -181,7 +181,7 @@ class calibration_quadratic:
      def estimateSigma(self,gamma_sigma,param,K,F,T,N_E):
        
        
-        a= self._a
+        a = self._a
         
         #param=np.exp(param) #transform to restrict a to be postive 
         effective_K = 1-np.exp(-a*N_E)*(1-K/F)
@@ -237,14 +237,12 @@ class time_dependent:
         self._b_list = b_list
         self._c_list = c_list
      
-    def object_func(self,gamma_sigma,F_front,F_back,T,N_E,K_list,mkt_vols,obj,b):
+    def object_func(self,gamma_sigma,F,T,N_E,K_list,obj,b):
         """
         function to calculate deifferece between market and model 
         Future prices/IV
         input: 
-        F_front: futures at the start of this month
-        F_back: futures at the start of next month
-        mkt_vols: mkts vols for F_back (for comparison to simulated futures)
+        F: futures 
         obj: Future Price/IV
         """
         a = self._a
@@ -252,15 +250,15 @@ class time_dependent:
         m=self._m
         b_list = self._b_list
         c_list = self._c_list
-        f0 = F_front + gamma_sigma[0]
+        f0 = F + gamma_sigma[0]
         b_list[-1] =b
-        c =gamma_sigma[1]*f0*np.exp(-0.5*a*N_E)/F_front-b
+        c =gamma_sigma[1]*f0*np.exp(-0.5*a*N_E)/F-b
         c_list[-1]=c
         St = simulate_spot(a,b_list,c_list,T,m,dt)
         
-        F_T = FutureDynamics(a, N_E,St[-1,:],F_front)
+        F_T = FutureDynamics(a, N_E,St[-1,:],F)
         if obj == "Future Price":
-            diff = sum((F_T-F_back)**2)
+            diff = sum((F_T-F)**2)
         
         else:
              ones=np.ones(len(K_list))
@@ -269,38 +267,40 @@ class time_dependent:
              market_price_dd=ones
              for i in range(len(K_list)):
                  call[i],SE_call[i] = OptionPricing(St[-1,:],K_list[i],N_E,F_T,a,m)
-                 market_price_dd[i]=BS(F_front+gamma_sigma[0],K[0][i]+gamma_sigma[0],gamma_sigma[1],N_E,0) 
+                 market_price_dd[i]=BS(F+gamma_sigma[0],K_list[i]+gamma_sigma[0],gamma_sigma[1],N_E,0) 
      
-            
-             params = np.vstack((call,F_front*ones,K_list, T*ones))
-             params_dd = np.vstack((market_price_dd,F_front*ones,K_list, T*ones))
+             
+             params = np.vstack((call,F*ones,K_list, T[-1]*ones))
+             params_dd = np.vstack((market_price_dd,F*ones,K_list, T[-1]*ones))
              vols_mdl = list(map(implied_vol, *params))
              vols_dd = list(map(implied_vol, *params_dd))
              n= len(K_list)
+             
              diff = np.ones(n)
              for i in range (n):
-                 if abs(K_list[i]-F_T)<0.5:
+                 if abs(K_list[i]-F)<0.5:
                      diff[i]= (vols_mdl[i]- vols_dd[i])**2*1000
                  else:
                       diff[i]=(vols_mdl[i]- vols_dd[i])**2
+             
              diff =sum(diff)
          
         return diff
         
      
         
-    def find_bc(self,gamma_sigma,F_front,F_back,T,N_E,K_list,mkt_vols,obj,start_params,b):
+    def find_bc(self,gamma_sigma,F,T,N_E,K_list,obj,start_params,b):
        
         
-         difference = lambda b: self.object_func(gamma_sigma,F_front,F_back,T,N_E,K_list,mkt_vols,obj,b)
+         difference = lambda b: self.object_func(gamma_sigma,F,T,N_E,K_list,obj,b)
          #bnds = ((0,1),(0,1))
          all_results = opt.minimize(fun=difference, x0=start_params,
                                         method="Nelder-Mead")#BFGS bounds=bnds)
          
-         error=self.object_func(gamma_sigma,F_front,F_back,T,N_E,K_list,mkt_vols,obj,all_results.x)
-         while(error)>0.0001:
+         error=self.object_func(gamma_sigma,F,T,N_E,K_list,obj,all_results.x)
+         if(error)>0.0001:
              all_results = opt.minimize(fun=difference, x0=all_results.x,  method="Nelder-Mead")
-             error=self.object_func(gamma_sigma,F_front,F_back,T,N_E,K_list,mkt_vols,obj,all_results.x)
+             error=self.object_func(gamma_sigma,F,T,N_E,K_list,obj,all_results.x)
          print('Error',error)
          return all_results.x
         
@@ -347,8 +347,9 @@ if __name__ == "__main__":
        
    
 #get first set of b and c for Augustto initialise the process
-    gamma_sigma_list= calibration_quadratic(a, K, T_M, Future).optimise(np.asarray(K[1],float), Future[1],T_M[1],np.asarray(market_price[1],float),param=[])
-    b0,c0=calibration_quadratic(a, K, T_M, Future).find_param(gamma_sigma_list,Future[1],K[1],T_M[1],N_E[1],param=[])
+    gamma_sigma_list= calibration_quadratic(a, K, T_M, Future).optimise(np.asarray(K[0],float), Future[0],T_M[0],np.asarray(market_price[2],float),param=[])
+    
+    b0,c0 = calibration_quadratic(a,K,T_M,Future).find_param(gamma_sigma_list,Future[0],K[0],T_M[0],N_E[0],param=[])
     print("Calibration Result for "+str(Month_List[1])+ " is b=" + str(b0)+" and c=" + str(c0))
  
 
@@ -357,18 +358,8 @@ if __name__ == "__main__":
     b_list[0]= b0
     c_list = np.ones(2)
     c_list[0]= c0
-    b1 = time_dependent(a, dt, m, b_list, c_list).find_bc(gamma_sigma_list[1], Future[1], Future[2], T_M[:2], N_E[1], K[1], vols_mkt[1], "IV", 0.1, [])
-    
-    St = simulate_spot(a,b[0],c[0],T_M[0],m,dt)
-        
-    F_T = FutureDynamics(a, N_E[0],St[-1,:],Future[0])
+    gamma_sigma= calibration_quadratic(a, K, T_M, Future).optimise(np.asarray(K[1],float), Future[1],T_M[1],np.asarray(market_price[1],float),param=[])
    
-    ones=np.ones(len(K[0]))
-    call=ones
-    SE_call =ones
-    market_price_dd=ones
-    for i in range(len(K[0])):
-        call[i],SE_call[i] = OptionPricing(St[-1,:],K[0][i],T_M[0],F_T,a,m)
-        market_price_dd[i]=BS(Future[0]+gamma_sigma_list[0][0],K[0][i]+gamma_sigma_list[0][0],gamma_sigma_list[0][1],N_E[0],0) 
-     
-           
+    b1 = time_dependent(a, dt, m, b_list, c_list).find_bc(gamma_sigma, Future[1], T_M[:2], N_E[1], K[1],"Future Price", 0.01, [])
+    
+  
