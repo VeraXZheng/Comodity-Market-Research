@@ -53,6 +53,7 @@ def sabr_spot(a,m,T,beta,nu,alpha):
             sigma[0,:]=alpha
             for i in range(N - 1):  
                     for j in range (mP):
+                        sigma[i+1,j] = sigma[i,j] -  nu *sigma[i,j] * dw2[i,j] 
                         eta=sigma[i,j]*St[i,j]**(beta-1)
                      
                         Yt[i+1,j]=Yt[i,j]+ eta*  dw1[i,j]+a*dt*(1-St[i,j])/St[i,j]-0.5* eta**2*dt
@@ -72,14 +73,14 @@ def sabr_spot(a,m,T,beta,nu,alpha):
                 
                 for i in range(int(n[k]),int(n[k+1])):
                     for j in range (mP): 
+                        sigma[i+1,j] = sigma[i,j] +nu[k] *sigma[i,j] * dw2[i,j] 
                         eta=sigma[i,j]*St[i,j]**(beta-1)
-                     
-                        Yt[i+1,j]=Yt[i,j]+ eta*  dw1[i,j]+a*dt*(1-St[i,j])/St[i,j]-0.5* eta**2*dt
-                      
+                        Yt[i+1,j]=Yt[i,j]+ eta* dw1[i,j]+a*dt*(1-St[i,j])/St[i,j]-0.5* eta**2*dt
+                        
                         sigma[i+1,j+mP] = sigma[i,j+mP] -  nu[k] *sigma[i,j+mP] * dw2[i,j] 
                         eta=sigma[i,j+mP]*St[i,j+mP]**(beta-1)
-                     
                         Yt[i+1,j+mP]=Yt[i,j+mP]- eta*dw1[i,j]+a*dt*(1-St[i,j+mP])/St[i,j+mP]-0.5* eta**2*dt
+                        
                         St[i+1,j]=np.exp(Yt[i+1,j])
                         St[i+1,j+mP]=np.exp(Yt[i+1,j+mP])  
         return St  
@@ -157,37 +158,45 @@ def find_param(n_calib,market_price,F,T,N_E,K_list,nu_list,alpha_list,beta):
 
 
     #object function for numeric method
-def obj_num(a,m,beta,nu,alpha,T,param):
-    LHS=
-    EY=0
-    VY=0
-    for i in range(len(T-1)):
+def solveforalpha(x,*param):
+    alpha_effective,alpha,T=param
+    alpha=np.insert(alpha,len(T)-1,x)
+    T=np.insert(T,0,0)
+    
+    EYR=0
+    VYR=0
+    
+    for i in range(len(T)-1):
            
-        EY+=alpha[i]**2(alpha[i]**2*(np.exp(T[i+1])-np.exp(T[i]))+(alpha[i]-alpha[i]**2)*(T[i+1]-T[i]))
+        EYR+=alpha[i]**3*((np.exp(T[i+1])-np.exp(T[i]))*alpha[i]+(1-alpha[i])*(T[i+1]-T[i]))
         
-        VY+= alpha[i]**8*(1/6*(np.exp(6*T[i+1])-np.exp(T[i]))-1/2*(np.exp(2*T[i+1])-np.exp(2*T[i])))
-    EY=EY+param**2(param**2*(np.exp(T[i+1])-np.exp(T[i]))+(param-param**2)*(T[i+1]-T[i]))  
-    VY =VY + param**8*(1/6*(np.exp(6*T[i+1])-np.exp(T[i]))-1/2*(np.exp(2*T[i+1])-np.exp(2*T[i])))
-    EsqrtY= np.sqrt(EY**2/np.sqrt(VY+EY**2))*(1+VY/EY**2)**(1/8)
-    diff =np.mean(St[-1,:])-1- EsqrtY/np.sqrt(2*np.pi)
-    return diff
+        VYR+= alpha[i]**8*((np.exp(6*T[i+1])-np.exp(6*T[i]))/6-(np.exp(2*T[i+1])-np.exp(2*T[i]))/2)
+    RHS= EYR/((VYR+EYR**2)**(1/4))*(1+VYR/(EYR**2))**(1/8)
+    EYL=alpha_effective**3*(alpha_effective*(np.exp(T[-1])-1)-(alpha_effective-1)*T[-1])
+    VYL= alpha_effective**8*((np.exp(6*T[-1])-1)/6-(np.exp(2*T[-1])-1)/2)
+    LHS= EYL/((VYL+EYL**2)**(1/4))*(1+VYL/(EYL**2))**(1/8)
+    return LHS-RHS
 
 #calibrate nu
 def solvefornu(x,*param):  
     T,alpha,nu=param
     lhs=0
     rhs=0
-   
+    sump=0
     sumj=0
+    sumjR=0
     nu=np.insert(nu,len(T)-1,x)
     T=np.insert(T,0,0)
     
-    for i in range(len(T)-1):
-        for j in range(1,max(i,1)+2):
-            #sum wrt j 
-            sumj+= nu[j-1]**2*(T[j]-T[j-1])
-        lhs+=alpha[i]**4*np.exp(6*(sumj-T[i]*nu[i]**2))*(np.exp(4*T[i+1]*nu[i]**2)-np.exp(4*T[i]*nu[i]**2)+4*(np.exp(-T[i+1]*nu[i]**2)-np.exp(-T[i]*nu[i]**2)))/(4*nu[i]**4)   
-        rhs+=alpha[i]**2*np.exp(sumj+(T[i+1]-2*T[i])*nu[i]**2)/(nu[i]**2)
+    for k in range(len(T)-1):
+        for j in range(1,max(k,1)+1):
+            for p in range(1,max(j,1)+1):
+            #sum wrt p 
+                sump+= nu[p-1]**2*(T[p]-T[p-1])-T[k]*nu[k]**2
+            sumj+=alpha[j-1]**2*np.exp(6*sump)*(np.exp(T[k+1]*nu[k]**2)-np.exp(T[k]*nu[k]**2)*(np.exp(5*T[j]*nu[k]**2)-np.exp(5*T[j-1]*nu[k]**2)))
+            sumjR+= nu[j-1]**2*(T[j]-T[j-1])
+        lhs+=alpha[k]**2/nu[k]**4*sumj+alpha[k]**2*(np.exp(6*sump)+(np.exp(6*T[k+1]*nu[k]**2)-np.exp(6*T[k]*nu[k]**2))/6+ np.exp(5*T[k]*nu[k]**2)*np.exp(T[k+1]*nu[k]**2)-np.exp(T[k]*nu[k]**2))
+        rhs+=alpha[k]**2*np.exp(sumjR+(T[k+1]-2*T[k])*nu[k]**2)/(nu[k]**2)
     rhs= (rhs/(np.exp(nu[-1]**2*T[-1])-1))**2*(np.exp(6*nu[-1]**2*T[-1])/6-np.exp(nu[-1]**2*T[-1])+5/6)
     return lhs-rhs 
 
@@ -216,7 +225,7 @@ if __name__ == "__main__":
     
     #magic number
     a =0 
-    m=5000
+    m=500
     dt=1/365
     np.random.seed(1)
     for i in range(len(Month_List)):
@@ -296,10 +305,10 @@ if __name__ == "__main__":
 
     
     #magic number
-    a =0.1
-    m=1000
+    a =0.
+    m=100
     dt=1/365
-    np.random.seed(1)
+    np.random.seed(111)
     for i in range(len(Month_List)):
         Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    #SEPopt
    
@@ -307,21 +316,27 @@ if __name__ == "__main__":
         T_M[i]= Option_Data["Time to Maturity"].values[0]
     
     #start alpha and nu
-    alpha_start= [0.74426606, 0.53440506]
-    nu = [0.7931,0.4753256]
-    # calibrate for novmber nu
-    param=(T_M[0:2],alpha_start,nu)
-    nu_nov = fsolve(solvefornu,0.5,args=param)
-    print(" november nu is" + str(nu_nov) + "error is" +str(solvefornu(nu_nov,*param)) )       
-    
-    Diff = lambda param: obj(alpha,T,param)
+    alpha= [0.73064841, 0.5270645 , 0.48178765]
+    nu = [0.4182074 , 0.44622021, 0.51095611]
    
-    all_results = opt.minimize(fun=Diff, x0=0.01,
-                                          method="Nelder-Mead",options= {"disp":True,"maxiter":60})
-                                          
-    error=obj(a,m,nu,alpha,T,all_results.x)
- 
-    print(all_results.x,error)
+    # calibrate for novmber nu
+    ncali=1
     
-
+    param=(T_M[0:ncali+1],alpha[:ncali+1],nu[:ncali])
+    nu[ncali] = fsolve(solvefornu,0.1,args=param)
+    print(" nu for "+ str(Month_List[i-1])+ " is" + str(nu[ncali]) + "error is" +str(solvefornu(nu[ncali],*param)) )       
+    
+    # calibrate for novmber alpha
+    ncali=1
+    
+    param=(alpha[ncali],alpha[:ncali],T_M[0:ncali+1])
+    alpha[ncali] = fsolve(solveforalpha,0.5,args=param)
+    print(" alpha for "+ str(Month_List[ncali-1])+ " is" + str(alpha[ncali]) + "error is" +str(solveforalpha(alpha[ncali],*param)) )       
+    
+    ncali=2
+    
+    param=(alpha[ncali],alpha[:ncali],T_M[0:ncali+1])
+    alpha[ncali] = fsolve(solveforalpha,0.5,args=param)
+    print(" alpha for "+ str(Month_List[ncali-1])+ " is" + str(alpha[ncali]) + "error is" +str(solveforalpha(alpha[ncali],*param)) )       
+    
        

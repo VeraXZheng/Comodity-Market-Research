@@ -278,8 +278,8 @@ if __name__ == "__main__":
     SE_call = np.zeros((len(K_list)))
     market_price_dd=np.zeros((len(K_list)))
     for i in range(len(K_list)):
-     call[i],SE_call[i] = Process(sigma0, a ,m, alpha, rho,S0,b[1],c[1]).OptionPricing(S_T,K_list[i],r,dt,T_M,F0,a,"MC")
-     market_price_dd[i]=BS(F0+gamma0,K_list[i]+gamma0,sigma0,T_M,0) #Process(sigma0, a ,m, alpha, rho,S0,b[0],c[0]).OptionPricing(F_T+gamma0,K_list[i]+gamma0,0,dt,T_M,np.mean(F_T),a,"bls")
+        call[i],SE_call[i] = Process(sigma0, a ,m, alpha, rho,S0,b[1],c[1]).OptionPricing(S_T,K_list[i],r,dt,T_M,F0,a,"MC")
+        market_price_dd[i]= BS(F0+gamma0,K_list[i]+gamma0,sigma0,T_M,0) #Process(sigma0, a ,m, alpha, rho,S0,b[0],c[0]).OptionPricing(F_T+gamma0,K_list[i]+gamma0,0,dt,T_M,np.mean(F_T),a,"bls")
     params = np.vstack((call, F0*ones,K_list, T_M*ones, r*ones))
     vols = list(map(implied_vol, *params))
    

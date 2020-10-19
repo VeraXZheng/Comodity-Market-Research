@@ -437,7 +437,7 @@ class Sabr:
         
         for i in range(len(F)):
             x0 = starting_par
-            bnds = ( (0.001,None) , (0,1) , (-0.999,0.999) , (0.001,None) ) 
+            bnds = ((0.001,None) , (0,1) , (-0.999,0.999) , (0.001,None) ) 
             Diff = lambda param: self.objfunc(param,F[i],K[i],time[i],MKT[i])
             res = opt.minimize(Diff,x0, method="SLSQP",bounds = bnds) 
             alpha[i] = res.x[0]

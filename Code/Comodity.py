@@ -19,7 +19,7 @@ import scipy.optimize as opt
 from scipy.special import ndtr
 class Process:
     
-    def __init__(self, sigma0, a,m,alpha,nu,rho,S0,b,c):
+    def __init__(self, sigma0, a,m,alpha,nu,rho,beta,S0,b,c):
         """
         Parameters
         ----------
@@ -55,8 +55,9 @@ class Process:
         self._b = b
         self._c = c
         self._nu = nu
+        self._beta = beta
     
-    def simulate_spot(self,T, T_M,dynamics):
+    def simulate_spot(self,T,dynamics):
         """
         function to model the normalised fictitious spot price
         Input:
@@ -73,34 +74,46 @@ class Process:
         b = self._b
         c = self._c
         S0 = self._S0
-        St = np.zeros((n,m))
+        beta = self._beta
+        St = np.zeros((n+1,m))
+        Yt = np.zeros((n+1,m))
         St[0,:] = S0
         alpha = self._alpha
         nu = self._nu
         rho = self._rho
-        sigma = np.zeros((n,m))
+        sigma = np.zeros((n+1,m))
         sigma0 = self._sigma0
         sqrt_dt = dt ** 0.5
-        
-        dw1 = np.random.normal(size=(n,m))* sqrt_dt 
+        mP=int(m*0.5)
+        dw1 = np.random.normal(size=(n,mP))* sqrt_dt 
         
         if dynamics == "Quadratic":
             sigma[0,:] = sigma0
-            for j in range (m):
-                for i in range(n - 1):
-               
-                     sigma[i+1,j] = b * St[i,j] +c 
-                     St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] * St[i,j] * dw1[i,j]
-        
+            for i in range (n-1):
+                for j in range(mP):
+                     vol = b * St[i,j] +c 
+                     Yt[i+1,j]=Yt[i,j]+vol*  dw1[i,j]+a*dt*(1-St[i,j])/St[i,j]-0.5*vol**2*dt
+                     vol = b * St[i,j+mP] +c 
+                     Yt[i+1,j+mP]=Yt[i,j+mP]+vol*  dw1[i,j]+a*dt*(1-St[i,j+mP])/St[i,j+mP]-0.5*vol**2*dt
+                     St[i+1,j]=np.exp(Yt[i+1,j])
+                     St[i+1,j+mP]=np.exp(Yt[i+1,j+mP])
         if dynamics == "Stochastic":
              sigma[0,:] = alpha
-             dw2 = np.random.normal(size=(n,m))* sqrt_dt 
+             
+             dw2 = np.random.normal(size=(n,mP))* sqrt_dt 
              dw3 = rho * dw1 + np.sqrt(1- rho **2) *dw2
-             for j in range (m):
-                 for i in range(n - 1):
-                   
-                     sigma[i+1,j] = sigma[i,j] +  nu *sigma[i,j] * dw3[i,j] 
-                     St[i+1,j] = St[i,j] + (1-St[i,j])* a * dt + sigma[i,j] *( St[i,j]-1+np.exp(a*T_M)) * dw1[i,j]
+             for i in range (n):
+                 for j in range(mP):
+                      sigma[i+1,j] = sigma[i,j] + nu *sigma[i,j] * dw3[i,j]
+                      eta=sigma[i,j]*St[i,j]**(beta-1)
+                      Yt[i+1,j]=Yt[i,j]+ eta*  dw1[i,j]+a*dt*(1-St[i,j])/St[i,j]-0.5* eta**2*dt
+                      
+                      sigma[i+1,j+mP] = sigma[i,j+mP] -  nu *sigma[i,j+mP] * dw3[i,j] 
+                      eta=sigma[i,j+mP]*St[i,j+mP]**(beta-1)
+                     
+                      Yt[i+1,j+mP]=Yt[i,j+mP]- eta*dw1[i,j]+a*dt*(1-St[i,j+mP])/St[i,j+mP]-0.5* eta**2*dt
+                      St[i+1,j]=np.exp(Yt[i+1,j])
+                      St[i+1,j+mP]=np.exp(Yt[i+1,j+mP])  
         return St
    
         
@@ -257,12 +270,12 @@ def BS(F,K,sigma,T,r):
     call = F* ndtr(d1)- K * np.exp(-r * T) * ndtr(d2)
     return call    
 # 
-def implied_vol(mkt_price, F, K, T_maturity, r, *args):
+def implied_vol(mkt_price, F, K, T_maturity, *args):
         Max_iteration = 500
         PRECISION = 1.0e-5
         sigma = 0.4
         for i in range(0, Max_iteration):
-            d1 = (np.log(F / K) + (r + 0.5 * sigma ** 2) * T_maturity) / (sigma * np.sqrt(T_maturity))
+            d1 = (np.log(F / K) + (0.5 * sigma ** 2) * T_maturity) / (sigma * np.sqrt(T_maturity))
             d2 = d1 - sigma * np.sqrt(T_maturity)
             bls_price = F * ndtr(d1) - np.exp(-r * T_maturity) * K * ndtr(d2)
             vega = F * norm._pdf(d1) * np.sqrt(T_maturity)
@@ -272,7 +285,8 @@ def implied_vol(mkt_price, F, K, T_maturity, r, *args):
             sigma = sigma + diff/vega # f(x) / f'(x)
         return sigma 
  
-  
+
+   
 
 
 class calibration_quadratic:
@@ -284,11 +298,6 @@ class calibration_quadratic:
         self._F = Future
      
        
-        
-        
-     
-      
-     
      def sum_difference(self,K,F,T,market_price,param):
         diff = np.ones(len(K))
         for i in range(len(K)):
@@ -304,6 +313,7 @@ class calibration_quadratic:
         return total
      
      def optimise(self,K,F,T,market_price,param):
+         "to get the constant param in DD process"
          start_params = np.array([0.01, 0.1])
          
          sum_diff = lambda param: self.sum_difference(K,F,T,market_price,param)
@@ -364,61 +374,11 @@ class calibration_quadratic:
          return all_results.x
  
          
-     ######new approach to calibrate stochastic b,c
-     def bNc_spot(self,gamma_sigma,F,T,N_E,K_list,b):
-         a= 0.103
-        
-        #param=np.exp(param) #transform to restrict a to be postive 
-         f0 = F + gamma_sigma[0]
-         c =gamma_sigma[1]*f0*np.exp(-0.5*a*N_E)/F-b
-        
-         s = Process(sigma0, a, m, alpha, rho,S0,b,c).simulate_spot(T, dt, "Quadratic")
-         S_T = s[-1,:]
-         ones =np.ones(np.size(K_list)) 
-         call = ones
-         SE_call = ones
-         
-         for i in range(len(K_list)):
-              call[i],SE_call[i] = Process(sigma0, a,m, alpha, rho,S0,b,c).OptionPricing(S_T,K_list[i],r,N_E,F,a,"MC")
-         
-        
-         params = np.vstack((call,F*ones,K_list, T*ones, r*ones))
-         vols = list(map(implied_vol, *params))
-         
-         return vols
-        
-     def obj_vol(self,gamma_sigma,K_list,F,T,N_E,sigma,b):
-          vols= self.bNc_spot(gamma_sigma,F,T,N_E,K_list,b)
-          
-          n= len(K_list)
-          diff = np.ones(n)
-          for i in range (n):
-              diff[i]= abs(sigma[i]- vols[i])
-        
-              if abs(K_list[i]-F)<0.5:
-                 diff[i]=10000*diff[i]
-              else:
-                 diff[i]=diff[i]
-          
-          return  sum(diff)
-     
-        
-     def find_bc(self,gamma_sigma,F,K_list,T,N_E,sigma,b):
-         start_params = 0.174
-         
-         difference = lambda b: self.obj_vol(gamma_sigma, K_list, F, T, N_E,sigma,b)
-         #bnds = ((0,1),(0,1))
-         all_results = opt.minimize(fun=difference, x0=start_params,
-                                        method="Nelder-Mead")#BFGS bounds=bnds)
-         
-         error=self.obj_vol(gamma_sigma,K_list, F, T, N_E,sigma,all_results.x,)
-         if (error)>0.001:
-             all_results = opt.minimize(fun=difference, x0=all_results.x,  method="Nelder-Mead")
-         return all_results.x
- 
+    
     
 class Sabr:
-    def SABR(self,alpha,rho,nu,F,K,time,MKT):
+    
+    def SABR(self,alpha,rho,nu,beta,F,K,time,MKT):
         """
         function to evaluate model implied vol at each strike with each tenor
         Input:
@@ -429,26 +389,30 @@ class Sabr:
         diff: difference between model implied vol and market implied vol
             
         """
+        
         if F == K: # ATM formula
-           
-            
-            A = 1 + (  alpha*nu*rho/4. + ((nu**2)*(2-3*(rho**2))/24.) ) * time
-            vol = alpha*A
-            diff = vol - MKT
-        elif F != K: # not-ATM formula 
-             
+            V = (F*K)**((1-beta)/2.)
             logFK = np.log(F/K)
-            z = nu*logFK/alpha
-            x =np.log( ( np.sqrt(1-2*rho*z+z**2) + z - rho ) / (1-rho) )
-            A= 1 + ( rho*nu*alpha/4+ (2-3*(rho**2))*(nu**2)/24. ) * time
-            
-            Vol = (nu*logFK*A)/x 
-            diff = Vol - MKT
+            A = 1 + ( ((1-beta)**2*alpha**2)/(24.*(V**2)) + (alpha*beta*nu*rho)/(4.*V)+ ((nu**2)*(2-3*(rho**2))/24.) ) * time
+            B = 1 + (1/24.)*(((1-beta)*logFK)**2) + (1/1920.)*(((1-beta)*logFK)**4) 
+            VOL = (alpha/V)*A
+            diff = VOL - MKT
+        elif F != K: # not-ATM formula 
+             V = (F*K)**((1-beta)/2.) 
+             logFK = np.log(F/K)
+             z = (nu/alpha)*V*logFK
+             x =np.log( ( np.sqrt(1-2*rho*z+z**2) + z - rho ) / (1-rho) ) 
+             A = 1 + ( ((1-beta)**2*alpha**2)/(24.*(V**2)) + (alpha*beta*nu*rho)/(4.*V) + ((nu**2)*(2-3*(rho**2))/24.) ) * time
+             B = 1 + (1/24.)*(((1-beta)*logFK)**2) + (1/1920.)*(((1-beta)*logFK)**4)
+             VOL = (nu*logFK*A)/(x*B) 
+             diff = VOL - MKT
         return diff
   
 
+  
 
-    def smile(self,alpha,rho,nu,F,K,time,MKT,i):
+
+    def smile(self,alpha,rho,nu,beta,F,K,time,MKT,i):
         """
         The smile function computes the implied volatilities for
         a given ”smile” pointed out by the index i. F, time and 
@@ -456,24 +420,24 @@ class Sabr:
         """
         for j in range(len(K)):
         
-            self.SABR(alpha,rho,nu,F,K[j],time,MKT[j])
+            self.SABR(alpha,rho,nu,beta,F,K[j],time,MKT[j])
 
 
 
-    def SABR_vol_matrix(self,alpha,rho,nu,F,K,time,MKT): 
+    def SABR_vol_matrix(self,alpha,rho,nu,beta,F,K,time,MKT): 
         """function computes the implied volatilities for all 
         combinations of swaptions. F, time and the parameters are vectors; 
         K and MKT are matrices.
         """
         for i in range(len(F)):
-            self.smile(alpha[i],rho[i],nu[i],F[i],K[i],time[i],MKT[i],i)
+            self.smile(alpha[i],rho[i],nu[i],beta[i],F[i],K[i],time[i],MKT[i],i)
 
 
-    def objfunc(self,par,F,K,time,MKT): 
+    def objfunc(self,par,beta,F,K,time,MKT): 
         sum_sq_diff = 0
         alpha,rho,nu=par
         for j in range(len(K)):
-            diff = self.SABR(alpha,rho,nu,F,K[j],time,MKT[j])  
+            diff = self.SABR(alpha,rho,nu,beta,F,K[j],time,MKT[j])  
             sum_sq_diff = sum_sq_diff + diff**2
         obj = np.sqrt(sum_sq_diff) 
         return obj
@@ -481,29 +445,26 @@ class Sabr:
     
     
     
-    def calibration(self,starting_par,F,K,time,MKT): 
+    def calibration(self,starting_par,beta,F,K,time,MKT): 
         """The function used to calibrate each smile 
         (different strikes within the same tenor"""
         alpha = np.zeros(len(F))
-        
-        rho = np.zeros(len(F))
         nu = np.zeros(len(F))
-        
+        rho = np.zeros(len(F))
         for i in range(len(F)):
             x0 = starting_par
-            bnds = ( (0.001,None)  , (-0.999,0.999) , (0.001,None) ) 
-            Diff = lambda param: self.objfunc(param,F[i],K[i],time[i],MKT[i])
+            bnds = ( (0.001,None) ,(-0.9999,0.9999), (0.001,None) ) 
+            Diff = lambda param: self.objfunc(param,beta,F[i],K[i],time[i],MKT[i])
             res = opt.minimize(Diff,x0, method="SLSQP",bounds = bnds) 
             alpha[i] = res.x[0]
-           
-            rho[i] = res.x[1] 
+            rho[i] = res.x[1]
             nu[i] = res.x[2]
 
-        return alpha, rho, nu
+        return alpha, rho,nu
 
     
-         
-   ###########################################################
+
+###############################################################
 
 ### start main
 if __name__ == "__main__":
@@ -770,11 +731,7 @@ if __name__ == "__main__":
     plt.legend(loc= 'best')
     plt.savefig(output_path+"Figures/SLV_alpha")
     
-    
-   
 
-
-#Price vs Strike
 
 
 
@@ -881,7 +838,7 @@ if __name__ == "__main__":
     ####calibration##################
 
     #
-    a=0.05
+    a=0
     Month_List = np.array(["October","November","December"])
     c= np.ones(len(Month_List))
     b= np.ones(len(Month_List))
@@ -909,68 +866,55 @@ if __name__ == "__main__":
         print('error', calibration_quadratic(a, K, T_M, Future).sum_difference(K[i],Future[i],T_M[i],market_price[i],gamma_sigma_list[i]))
  
     
-    ####Calibration for different months
-       
-    
         b[i],c[i]=calibration_quadratic(a, K, T_M, Future).find_param(gamma_sigma_list[i],Future[i],K[i],T_M[i],N_E[i],param=[])
         
         print("Calibration Result for "+str(Month_List[i])+ " is b=" +str(b[i])+" and c=" +str(c[i]))
         print('Error',calibration_quadratic(a, K, T_M, Future).object_func(gamma_sigma_list[i],Future[i],K[i],T_M[i],N_E[i],[b[i],c[i]]))
     #####calculate the model price######
-    Month ="October"#“November” “December”
-    sigma0= gamma_sigma_list[0][1]
+    Month ="November"#“November” “December”
+    nM=1
+    sigma0= gamma_sigma_list[nM][1]
     
-    gamma0= gamma_sigma_list[0][0]
+    gamma0= gamma_sigma_list[nM][0]
    
-
-    m = 10000
+    a=0
+    m = 100000
     alpha = 0
-    rho =0.15
+    rho =0
     S0=1
     #
     
     dt=1/365
    
-    F_oct =  Future[0]  
-    K_oct = K[0]
-   
     
-    ones =np.ones(np.size(K_oct))   
     
-    #time to maturity
-    N_E_oct = N_E[0]
-    T_M_oct = T_M[0]
-    Call_oct = market_price[0]
-    #c_mkt = Call_list*np.exp(a*T_M)/F0 ##call price on the normalised spot
+    ones =np.ones(np.size(K[nM]))   
+    
+    
    
-    S = Process(sigma0, a, m, alpha, rho,S0,b[0],c[0]).simulate_spot(T_M_oct,dt,"Quadratic")
+    S = Process(sigma0, a, m, alpha,nu, rho,S0,b[nM],c[nM]).simulate_spot(T[nM],N_E[nM],"Quadratic")
    
     S_T = S[-1,:]
     
-   #simulate for november
+    Call = market_price[nM]
    
-    call = np.zeros((len(K[0])))
-    SE_call = np.zeros((len(K[0])))
-    market_price_dd=np.zeros((len(K[0])))
-    for i in range(len(K[0])):
-       call[i],SE_call[i] = Process(sigma0, a ,m, alpha,rho,S0,b[0],c[0]).OptionPricing(S_T,K_oct[i],r,N_E[0],F_oct,a,"MC")#N_E
-       market_price_dd[i]=BS(F_oct+gamma0,K_oct[i]+gamma0,sigma0,N_E[0],0) 
-     #Process(sigma0, a ,m, alpha, rho,S0,b[0],c[0]).OptionPricing(F_T+gamma0,K_list[i]+gamma0,0,dt,T_M,np.mean(F_T),a,"bls")
-   
+    call = np.zeros((len(K[nM])))
+    SE_call = np.zeros((len(K[nM])))
+    market_price_dd=np.zeros((len(K[nM])))
+    for i in range(len(K[nM])):
+       call[i],SE_call[i] = Process(sigma0, a ,m, alpha,nu,rho,S0,b[nM],c[nM]).OptionPricing(S_T,K[nM][i],r,N_E[nM],Future[nM],a,"MC")#N_E
+       market_price_dd[i]=BS(Future[nM]+gamma0,K[nM][i]+gamma0,sigma0,T_M[nM],0) 
     
-    params = np.vstack((call, F_oct*ones,K_oct, T_M[0]*ones, r*ones))
+    
+    params = np.vstack((call, Future[nM]*ones,K[nM], T_M[nM]*ones, r*ones))
     vols = list(map(implied_vol, *params))
    
-    effective_K = 1-np.exp(-a*N_E[0])*(1-K_oct/F_oct)
+    effective_K = 1-np.exp(-a*N_E[nM])*(1-K[nM]/Future[nM])
    
     ###implied vol from the market prices
-    params_mkt = np.vstack((market_price_dd, F_oct*ones,K_oct, T_M[0]*ones, r*ones))
+    params_mkt = np.vstack((market_price_dd, Future[nM]*ones,K[nM], T_M[nM]*ones, r*ones))
     vols_mkt = list(map(implied_vol, *params_mkt))
    
-   
-    
-    # params_AA= np.vstack((vols_mkt,0.5*ones,K_list,F0*ones))
-    # eta_AA = list(map(calibration(a, K, T_M, Future).AA_algorithm,*params_AA))
    
     
     plt.figure(dpi=1000)
@@ -978,28 +922,21 @@ if __name__ == "__main__":
     plt.plot(effective_K,vols_mkt,'--r*',label="Market IV")
     plt.xlabel("Strike")
     plt.ylabel("Implied Volatility")
-    plt.title("Implied Volatilities of TTF Futures Options Expires in " + str(Month)  )
+    plt.title("Implied Volatilities of TTF Future Style Option Expires in " + str(Month)  )
     plt.legend(loc= 'best')
-    plt.savefig(output_path + "Figures/IV_model_mkt1"+str(Month))
+    plt.savefig(output_path + "Figures/LV_model_mkt_vol"+str(Month))
     
     
     
     plt.figure(dpi=1000)
-    plt.plot(effective_K,call,linestyle='None',color='g',marker='o',label="Model Prices VS Strikes")
-    plt.plot(effective_K,Call_list,'--r*',label="Market Prices VS Strikes")
+    plt.plot(effective_K,Call,'--b*',label="Market Prices VS Strikes")
+    plt.plot(effective_K,market_price_dd,linestyle='None',color='g',marker='o',label="Model Prices VS Strikes")
+    
     plt.xlabel("Strike")
     plt.ylabel("Option Price")
-    plt.title("Comparison of TTF Futures Option Price Expired in " + str(Month)  )
+    plt.title("Comparison of TTF Future Style Option Price Expired in " + str(Month)  )
     plt.legend(loc= 'best')
-    plt.savefig(output_path + "Figures/price_model_mkt1"+str(Month))
-
-########New Method To Calibrate b, c
-    #for october
-    
-    calibration_quadratic(a, K, T_M, Future).find_bc(gamma_sigma_list[0], Future[0], K[0], T_M[0], N_E[0], vols_mkt[0],b=[])
-    
-
-
+    plt.savefig(output_path + "Figures/LV_model_mkt_price"+str(Month))
 
 
 
@@ -1007,7 +944,9 @@ if __name__ == "__main__":
 
 
 ###Calibration Sabr####
-    Month_List = np.array(["October","November","December"])
+    
+    Month_List = Month_List = ["October","November","December"]
+    n_month=len(Month_List)
     N_E = np.ones((len(Month_List)))
     T_M = np.ones((len(Month_List)))
     Future= np.ones((len(Month_List)))
@@ -1017,6 +956,11 @@ if __name__ == "__main__":
     vols_mdl = np.zeros((len(Month_List),10), dtype=np.ndarray)
     effective_K=np.zeros((len(Month_List),10), dtype=np.ndarray)
     
+    #magic number
+    a =0.
+    m=500
+    dt=1/365
+    np.random.seed(111)
     for i in range(len(Month_List)):
         Option_Data = pd.read_excel(input_path+ "TTFdata"+".xlsx",sheet_name = Month_List[i])    #SEPopt
     #strike 
@@ -1031,28 +975,51 @@ if __name__ == "__main__":
         Future[i] = Option_Data["1-Month Future"].values[0]
     
         effective_K[i] = 1-np.exp(-a*N_E[i])*(1-K[i]/Future[i])
-    #params needed to clculate market vols
         ones= np.ones(np.size(K[i]))
-        params_mkt = np.vstack((market_price[i], Future[i]*ones,K[i], T_M[i]*ones, r*ones))
-        params_mdl = np.vstack((call[i], Future[i]*ones,K[i], T_M[i]*ones, r*ones))
+        params_mkt = np.vstack((market_price[i], Future[i]*ones,K[i], T_M[i]*ones))
+    
         vols_mkt[i] = list(map(implied_vol, *params_mkt))
-        vols_mdl[i] = list(map(implied_vol, *params_mdl))
+       
    
-   
-    starting_par= np.array([0.001,0,0.001])
-    [alpha,rho,nu]=Sabr().calibration(starting_par,Future,K,T_M,vols_mkt)
+
+
+    beta=0.5
+    # Future_Y = np.exp(-a*N_E)*Future
+    # K_Y=np.dot(K*np.exp(-a*N_E).reshape(3,1),1)
+    # starting_par = np.array([0.1,0.1,0.1])
+    # [alpha,rho,nu] = Sabr().calibration(starting_par,beta,Future_Y,K_Y,T_M,vols_mkt)
+    
+    # call = np.zeros((len(Month_List),10), dtype=np.ndarray)
+    # SE_call= np.zeros((len(Month_List),10), dtype=np.ndarray)
+    # market_price_dd= np.zeros((len(Month_List),10), dtype=np.ndarray)
+    # alpha_spot= alpha*(np.exp(-a*N_E)*Future)**(beta-1)
+    # nu_spot= nu*(np.exp(-a*N_E)*Future)**(beta-1)
+    Future_Y = np.exp(-a*N_E)*Future
+    K_Y=K/Future.reshape(3,1)
+    starting_par = np.array([0.1,0.1,0.1])
+    [alpha,rho,nu] = Sabr().calibration(starting_par,beta,np.ones(len(Future)),K_Y,T_M,vols_mkt)
     
     call = np.zeros((len(Month_List),10), dtype=np.ndarray)
     SE_call= np.zeros((len(Month_List),10), dtype=np.ndarray)
-    
-    #dynamic of spot 
+   
+    # alpha_spot= alpha*(np.exp(-a*N_E)*Future)**(beta-1)
+    # nu_spot= nu*(np.exp(-a*N_E)*Future)**(beta-1)
+    #dynamic of spot
+   
     for i in range(len(Month_List)):
-        St= Process(sigma0,a,m,alpha[i],nu[i],rho[i],1,b,c).simulate_spot(T_M[i],N_E[i],"Stochastic")
+        
+        St= Process(sigma0,a,m,alpha[i],nu[i],rho[i],beta,1,b,c).simulate_spot(T_M[i],"Stochastic")
         S_T = St[-1,:]
         for j in range(len(K[i])):
-               call[i,j],SE_call[i,j] = Process(sigma0, a,m, alpha, nu,rho,S0,b,c).OptionPricing(S_T,K[i][j],r,T_M[i],Future[i],0.01,"MC")
+               call[i,j],SE_call[i,j] = Process(sigma0, a,m, alpha, nu,rho,beta,S0,b,c).OptionPricing(S_T,K[i][j],r,T_M[i],Future[i],0.01,"MC")
+               market_price_dd[i,j]=BS(Future[i]+gamma_sigma_list[i][0],K[i][j]+gamma_sigma_list[i][0],gamma_sigma_list[i][1],T_M[i],0) 
+        params_mdl = np.vstack((call[i,:], Future[i]*ones,K[i], T_M[i]*ones))
+       
+       
    
-    
+       
+        vols_mdl[i] = list(map(implied_vol, *params_mdl))
+       
     for i in range(len(Month_List)): 
         plt.figure(dpi=1000)
         plt.plot(effective_K[i],call[i],linestyle='None',color='g',marker='o',label="Model Prices VS Strikes")
@@ -1071,3 +1038,5 @@ if __name__ == "__main__":
          plt.title("Implied Volatilities of TTF Futures Options Expires in " + str(Month_List[i])  )
          plt.legend(loc= 'best')
          plt.savefig(output_path + "Figures/vol_mdl_mkt"+str(Month_List[i]))
+         
+    
