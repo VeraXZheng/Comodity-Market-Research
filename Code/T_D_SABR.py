@@ -41,7 +41,7 @@ def sabr_spot(a,m,T,beta,nu,alpha):
         Yt = np.zeros((N+1,m))
         St[0,:] = 1
       
-        sigma = np.zeros((N+1,m))
+        sigma = np.ones((N+1,m))
         
         sqrt_dt = dt ** 0.5
         mP=int(m*0.5)
@@ -50,11 +50,11 @@ def sabr_spot(a,m,T,beta,nu,alpha):
         
         dw2 = np.random.normal(size=(N,mP))* sqrt_dt 
         if np.size(T)==1:
-            sigma[0,:]=alpha
+            
             for i in range(N - 1):  
                     for j in range (mP):
                         sigma[i+1,j] = sigma[i,j] -  nu *sigma[i,j] * dw2[i,j] 
-                        eta=sigma[i,j]*St[i,j]**(beta-1)
+                        eta=sigma[i,j]*St[i,j]**(beta-1)*alpha
                      
                         Yt[i+1,j]=Yt[i,j]+ eta*  dw1[i,j]+a*dt*(1-St[i,j])/St[i,j]-0.5* eta**2*dt
                       
@@ -69,21 +69,22 @@ def sabr_spot(a,m,T,beta,nu,alpha):
         else:  
             n=np.insert(n,0,0,axis=0)    
             for k in range(len(T)):
-                sigma[int(n[k]),:]=alpha[k]
+                
                 
                 for i in range(int(n[k]),int(n[k+1])):
                     for j in range (mP): 
                         sigma[i+1,j] = sigma[i,j] +nu[k] *sigma[i,j] * dw2[i,j] 
-                        eta=sigma[i,j]*St[i,j]**(beta-1)
+                        eta=sigma[i,j]*St[i,j]**(beta-1)*alpha[k]
                         Yt[i+1,j]=Yt[i,j]+ eta* dw1[i,j]+a*dt*(1-St[i,j])/St[i,j]-0.5* eta**2*dt
                         
                         sigma[i+1,j+mP] = sigma[i,j+mP] -  nu[k] *sigma[i,j+mP] * dw2[i,j] 
-                        eta=sigma[i,j+mP]*St[i,j+mP]**(beta-1)
-                        Yt[i+1,j+mP]=Yt[i,j+mP]- eta*dw1[i,j]+a*dt*(1-St[i,j+mP])/St[i,j+mP]-0.5* eta**2*dt
+                        eta=sigma[i,j+mP]*St[i,j+mP]**(beta-1)*alpha[k]
                         
+                        Yt[i+1,j+mP]=Yt[i,j+mP]- eta*dw1[i,j]+a*dt*(1-St[i,j+mP])/St[i,j+mP]-0.5* eta**2*dt
                         St[i+1,j]=np.exp(Yt[i+1,j])
                         St[i+1,j+mP]=np.exp(Yt[i+1,j+mP])  
         return St  
+
 def OptionPricing(S_T,K,N_E,F_T,a,m):
         """
         function to price call options on the futures
