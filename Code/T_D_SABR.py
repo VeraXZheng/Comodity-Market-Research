@@ -42,7 +42,6 @@ def sabr_spot(a,m,T,beta,nu,alpha):
         St[0,:] = 1
       
         sigma = np.ones((N+1,m))
-        
         sqrt_dt = dt ** 0.5
         mP=int(m*0.5)
       
@@ -85,6 +84,7 @@ def sabr_spot(a,m,T,beta,nu,alpha):
                         St[i+1,j+mP]=np.exp(Yt[i+1,j+mP])  
         return St  
 
+
 def OptionPricing(S_T,K,N_E,F_T,a,m):
         """
         function to price call options on the futures
@@ -107,6 +107,7 @@ def OptionPricing(S_T,K,N_E,F_T,a,m):
  
  
 #object function for brut force
+
 def object_func(n_calib,market_price,F,T,N_E,K_list,alpha_list,nu_list,beta,param):
         """
         function to calculate deifferece between market and model
@@ -295,13 +296,12 @@ if __name__ == "__main__":
     plt.plot(effective_K[n_calib],market_price[n_calib],'--r*',label="Market Prices VS Strikes")
     plt.title("Comparison of TTF Futures Option Price Expired in " + str(Month_List[n_calib])  )
     plt.legend(loc= 'best')
-      # ________________________
-       
+
    
 
 
-    
-    
+  # _____________________________________________________   
+#approximation method from Anton's paper    
    
 
     
